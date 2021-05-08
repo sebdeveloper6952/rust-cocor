@@ -1,3 +1,7 @@
+/// Declare the scanner module
+mod scanner;
+
+use scanner::Scanner;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
@@ -699,7 +703,6 @@ fn parse_characters_line(
                     next_op = 0 as char;
                 }
             } else {
-                println!("ident_vec: {:?}", ident_vec);
                 curr_set.extend(cat_table[&ident_vec].clone());
                 // handle operators
                 handle_operators(next_op, &mut final_set, &mut curr_set);
@@ -970,7 +973,6 @@ fn parse_cocol_file(
     while !lines.is_empty() {
         let line = lines.pop().unwrap();
         let tokens: Vec<&str> = line.splitn(2, '=').collect();
-        println!("tokens: {:?}", tokens);
         // update file section
         match sections.iter().position(|&s| s == tokens[0].trim()) {
             Some(pos) => {
@@ -1018,7 +1020,7 @@ fn parse_cocol_file(
 ///
 /// Output
 ///  - Writes the lexical analyzer source file to the project root directory.
-fn generate_code(
+fn generate_scanner(
     filename: &str,
     dfa: &Dfa,
     accepting_states: &HashMap<u32, CocolToken>,
@@ -1034,7 +1036,7 @@ use std::process;
 use std::fs;
 
 #[derive(Debug, Clone)]
-struct Token {
+pub struct Token {
     name: String,
     lexeme: String,
 }
@@ -1045,16 +1047,36 @@ impl Token {
     }
 }
 
-fn main() {
-    let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        println!(\"usage: ./rust-lex \\\"<file>\\\"\");
-        process::exit(1);
+pub struct Scanner {
+    pub tokens: Vec<Token>,
+    index: u32,
+}
+
+impl Scanner {
+    pub fn new(path: &str) -> Scanner {
+        let mut scanner = Scanner {
+            tokens: Vec::new(),
+            index: 0,
+        };
+        scanner.init(path);
+
+        scanner
     }
-    let file = fs::read_to_string(&args[1]).unwrap();
-    let mut dfa:  HashMap<u32, HashMap<u8, u32>> = HashMap::new();
-    let mut accepting_states: HashMap<u32, String> = HashMap::new();
-",
+    pub fn next_token(&mut self) -> Option<Token> {
+        match self.tokens.get(self.index as usize) {
+            Some(token) => {
+                self.index += 1;
+                Some(token.clone())
+            }
+            None => None,
+        }
+    }
+
+    fn init(&mut self, path: &str) {
+        let file = fs::read_to_string(path).unwrap();
+        let mut dfa: HashMap<u32, HashMap<u8, u32>> = HashMap::new();
+        let mut accepting_states: HashMap<u32, String> = HashMap::new();
+    ",
     );
 
     // build dfa
@@ -1122,7 +1144,6 @@ fn main() {
     let mut curr_state = 0;
     let mut states: Vec<u32> = Vec::new();
     let mut curr_lexeme = String::new();
-    let mut found_tokens: Vec<Token> = Vec::new();
     while curr_idx < bytes.len() {
         let curr_char = bytes[curr_idx];
     ",
@@ -1159,15 +1180,15 @@ fn main() {
             "
         if except_table.contains_key(&accepting_states[&top]) {
             if keywords.contains_key(&curr_lexeme) {
-                found_tokens.push(Token::new(String::from(\"keyword\"), curr_lexeme.clone()));
+                self.tokens.push(Token::new(String::from(\"keyword\"), curr_lexeme.clone()));
             } else {
-                found_tokens.push(Token::new(
+                self.tokens.push(Token::new(
                     accepting_states[&top].clone(),
                     curr_lexeme.clone(),
                 ));    
             }
         } else {
-            found_tokens.push(Token::new(
+            self.tokens.push(Token::new(
                 accepting_states[&top].clone(),
                 curr_lexeme.clone(),
             ));
@@ -1177,7 +1198,7 @@ fn main() {
     } else {
         code.push_str(
             "
-        found_tokens.push(Token::new(
+        self.tokens.push(Token::new(
             accepting_states[&top].clone(),
             curr_lexeme.clone(),
         ));
@@ -1205,12 +1226,7 @@ fn main() {
             curr_idx += 1;
         }
     }
-    for token in &found_tokens {
-        println!(\"{:?}\", token);
-    }
-
-    println!(\"\n* Scanner found {} tokens. *\", found_tokens.len());
-}
+}}
     ",
     );
     fs::write(filename, code).expect(&format!("Error writing file: {}.", filename));
@@ -1221,8 +1237,8 @@ fn main() {
     // program arguments
     let args: Vec<String> = env::args().collect();
 
-    if args.len() < 2 {
-        println!("usage: ./exec \"<file>\"");
+    if args.len() < 3 {
+        println!("usage: ./exec \"<grammar_file>\" \"<input_file>\"");
         process::exit(1);
     }
 
@@ -1261,22 +1277,22 @@ fn main() {
         &mut whitespace,
     );
 
-    println!("*************** COCOL/R Scanner Generator ****************");
-    println!("* Reserved characters:");
-    println!(
-        "* {} {} {} {} {} {} {}",
-        EXT_CHAR, UNION_CHAR, KLEENE_CHAR, CONCAT_CHAR, EPSILON, POSITIVE_CHAR, OPTIONAL_CHAR
-    );
-    println!("******************* Scanner Info ***********************");
-    println!("********************* CHARACTERS *************************");
-    for (key, value) in cat_table {
-        println!("* {} => {:?}", key, value);
-    }
-    println!("********************* KEYWORDS *************************");
-    for (key, value) in &keywords {
-        println!("* {} => {}", key, value);
-    }
-    println!("********************* TOKENS *************************");
+    // println!("*************** COCOL/R Scanner Generator ****************");
+    // println!("* Reserved characters:");
+    // println!(
+    //     "* {} {} {} {} {} {} {}",
+    //     EXT_CHAR, UNION_CHAR, KLEENE_CHAR, CONCAT_CHAR, EPSILON, POSITIVE_CHAR, OPTIONAL_CHAR
+    // );
+    // println!("******************* Scanner Info ***********************");
+    // println!("********************* CHARACTERS *************************");
+    // for (key, value) in cat_table {
+    //     println!("* {} => {:?}", key, value);
+    // }
+    // println!("********************* KEYWORDS *************************");
+    // for (key, value) in &keywords {
+    //     println!("* {} => {}", key, value);
+    // }
+    // println!("********************* TOKENS *************************");
     let mut regex = String::from(PARENTHESES_OPEN);
     for token in &tokens {
         // extend the current regular expression
@@ -1288,21 +1304,16 @@ fn main() {
         rregex.insert(rregex.len() - count + 1, EXT_CHAR);
         // append the current regex to the global regex with a UNION character.
         regex.push_str(&format!("{}{}", rregex, UNION_CHAR));
-        println!("* {:?}", token);
-        if except_table.contains_key(&token.name) {
-            println!("\tcontains EXCEPT KEYWORDS");
-        }
     }
     regex.pop();
-    println!("******************* WHITESPACE ***********************");
-    for c in &whitespace {
-        println!("* ascii code: {}", *c as u8);
-    }
-    println!("****************** FINAL REGEX ***********************");
+    // println!("******************* WHITESPACE ***********************");
+    // for c in &whitespace {
+    //     println!("* ascii code: {}", *c as u8);
+    // }
+    // println!("****************** FINAL REGEX ***********************");
     regex.push(PARENTHESES_CLOSE);
     // replace '?' and '+' operators by the basic operators
     let proc_regex = preprocess_regex(&regex);
-    // println!("{}", proc_regex);
     // create the alphabet using the symbols in the regex
     let mut letters = proc_regex.clone();
     letters.retain(|c| (is_valid_regex_symbol(&c) && c != EPSILON));
@@ -1325,13 +1336,23 @@ fn main() {
     );
 
     // code generation
-    generate_code(
-        "rust-lex.rs",
+    let scanner_path = "./src/scanner.rs";
+    generate_scanner(
+        scanner_path,
         &direct_dfa,
         &accepting_states,
         &keywords,
         &except_table,
         &whitespace,
     );
-    println!("File rust-lex.rs written correctly.");
+    println!("Scanner ({}) written correctly.", scanner_path);
+
+    // scanner
+    let mut scanner = Scanner::new(&args[2]);
+    loop {
+        match scanner.next_token() {
+            Some(token) => println!("{:?}", token),
+            _ => break,
+        }
+    }
 }
