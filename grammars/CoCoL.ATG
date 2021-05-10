@@ -1,0 +1,26 @@
+COMPILER MyCOCOR
+
+CHARACTERS
+
+letter = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz".
+digit  = "0123456789".
+quote  = '\"'.
+anyButQuote = ANY - quote.
+
+TOKENS
+
+ident    = letter{letter|digit}.
+eq       = "=".
+p_end    = ".".
+br_open  = '{'.
+br_close = '}'.
+sq_open  = '['.
+sq_close = ']'.
+p_open   = '('.
+p_close  = ')'.
+union    = '|'.
+attr     = '<' {ANY} '>'.
+s_action = "(." {ANY} ".)".
+string   = quote {anyButQuote} quote.
+
+END MyCOCOR
