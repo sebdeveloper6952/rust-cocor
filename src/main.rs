@@ -1,9 +1,10 @@
 mod cocor_scanner;
-// mod parser;
+mod parser;
 /// Declare the scanner module
 mod scanner;
 
 use cocor_scanner::CocorScanner;
+use parser::Parser;
 use scanner::Scanner;
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -1045,8 +1046,12 @@ pub struct Token {
 }
 
 impl Token {
-    fn new(name: String, lexeme: String) -> Token {
+    pub fn new(name: String, lexeme: String) -> Token {
         Token { name, lexeme }
+    }
+
+    pub fn empty() -> Token {
+        Token {name:String::new(), lexeme:String::new()}
     }
 }
 
@@ -1183,7 +1188,10 @@ impl Scanner {
             "
         if except_table.contains_key(&accepting_states[&top]) {
             if keywords.contains_key(&curr_lexeme) {
-                self.tokens.push(Token::new(String::from(\"keyword\"), curr_lexeme.clone()));
+                self.tokens.push(Token::new(
+                    String::from(\"keyword\"),
+                    curr_lexeme.clone()
+                ));
             } else {
                 self.tokens.push(Token::new(
                     accepting_states[&top].clone(),
@@ -1235,6 +1243,7 @@ impl Scanner {
     fs::write(filename, code).expect(&format!("Error writing file: {}.", filename));
 }
 
+#[derive(Debug)]
 struct Production {
     head: cocor_scanner::Token,
     body: Vec<cocor_scanner::Token>,
@@ -1255,173 +1264,42 @@ impl Production {
     }
 }
 
-fn parse_productions(
-    path: &str,
-    tok_table: &mut HashMap<String, String>,
-    tokens: &mut Vec<CocolToken>,
-) {
-    // generate parser
-    let mut title_found = false;
-    let mut parsing = false;
-    // let mut method = false;
-    let mut coco_scanner = CocorScanner::new(path);
+/**
+ *
+ */
+fn calc_first_sets(
+    prods: &Vec<Production>,
+    tok_table: &HashMap<String, String>,
+) -> HashMap<String, Vec<String>> {
     let mut first_sets: HashMap<String, Vec<String>> = HashMap::new();
-    let mut productions: Vec<Production> = Vec::new();
-    let mut curr_production = Vec::new();
-    let mut curr_head = cocor_scanner::Token::new(String::from(""), String::from(""));
-    //     let mut code = String::new();
-    //     code.push_str(
-    //         "
-    // pub struct Parser {
-    //     pub next: Option<Token>,
-    //     pub curr: Option<Token>,
-    // }
-    // impl Parser {
-    //     fn new() -> Parser {
-    //         Parser {next: None, curr: None}
-    //     }
-
-    //     fn m(t: &str) {
-    //     println!(\"{}\", t);
-    // }\n",
-    //     );
-    loop {
-        match coco_scanner.next_token() {
-            Some(token) => {
-                if token.lexeme == "PRODUCTIONS" {
-                    title_found = true;
-                    continue;
-                }
-                if title_found {
-                    // println!("{:?}", token);
-                    if token.name == "ident" && !parsing {
-                        parsing = true;
-                        if token.lexeme == "END" {
-                            break;
-                        }
-                        first_sets.insert(token.lexeme.clone(), Vec::new());
-                        curr_head = token.clone();
-                        // code.push_str(&format!("fn {} (", token.lexeme));
-                    } else if parsing {
-                        if token.name == "eq" {
-                            // code.push_str(") {");
-                        } else if token.name == "br_open" {
-                            curr_production.push(token);
-                            // code.push_str(&format!("while  (true) {{"));
-                        } else if token.name == "br_close" {
-                            curr_production.push(token);
-                            // code.push('}');
-                        } else if token.name == "sq_open" {
-                            curr_production.push(token);
-                            // code.push_str(&format!("while  (true) {{"));
-                        } else if token.name == "sq_close" {
-                            curr_production.push(token);
-                            // code.push('}');
-                        } else if token.name == "p_open" {
-                            curr_production.push(token);
-                            // code.push_str(&format!("while  (true) {{"));
-                        } else if token.name == "p_close" {
-                            curr_production.push(token);
-                            // code.push('}');
-                        } else if token.name == "union" {
-                            curr_production.push(token);
-                        } else if token.name == "ident" {
-                            curr_production.push(token);
-                            // if token is terminal, match
-                            // if tok_table.contains_key(&token.lexeme) {
-                            //     code.push_str(&format!("self.m(\"{}\");", token.lexeme));
-                            // } else {
-                            //     method = true;
-                            //     code.push_str(&format!("self.{}(", token.lexeme));
-                            // }
-                            // continue;
-                        } else if token.name == "string" {
-                            if !tok_table.contains_key(&token.lexeme) {
-                                let mut s = token.lexeme.clone();
-                                let mut regex = String::from(PARENTHESES_OPEN);
-                                s.remove(0);
-                                s.pop();
-                                regex.push_str(&format!(
-                                    "{}{}{}",
-                                    s, PARENTHESES_CLOSE, CONCAT_CHAR
-                                ));
-                                tok_table.insert(token.lexeme.clone(), token.lexeme.clone());
-                                let new_token = CocolToken::new(tokens.len() as u32, s, regex);
-                                tokens.push(new_token);
-                            }
-                            curr_production.push(token);
-                        } else if token.name == "s_action" {
-                            // let mut s = token.lexeme.clone();
-                            // s.remove(0);
-                            // s.remove(0);
-                            // s.pop();
-                            // s.pop();
-                            // code.push_str(&format!("{}", s));
-                        } else if token.name == "attr" {
-                            // let mut s = token.lexeme.clone();
-                            // s.remove(0);
-                            // s.pop();
-                            // code.push_str(&format!("{}", s));
-                        } else if token.name == "p_end" {
-                            parsing = false;
-                            let mut new_prod =
-                                Production::new(curr_head.clone(), curr_production.clone(), false);
-                            // handle epsilon derivation
-                            let f = curr_production.first().unwrap();
-                            let l = curr_production.last().unwrap();
-                            if f.lexeme == "{" && l.lexeme == "}" {
-                                new_prod.derives_epsilon = true;
-                            }
-                            productions.push(new_prod);
-                            curr_production.clear();
-                            // prods.push();
-                            // code.push_str("}\n");
-                        }
-                        // if method {
-                        //     code.push_str(");");
-                        //     method = false;
-                        // }
-                    }
-                }
-            }
-            _ => break,
-        }
+    for p in prods {
+        first_sets.insert(p.head.lexeme.clone(), Vec::new());
     }
-
-    println!("\n\nProductions...");
-    for p in &productions {
-        print!("{:?} => ", p.head.lexeme);
-        for token in &p.body {
-            print!(" {:?} ", token.lexeme);
-        }
-        println!("({})", p.derives_epsilon);
-    }
-    println!();
-
-    // calc first sets
     loop {
         let mut changed = false;
-        // for each production
-        for p in &productions {
+        for p in prods {
             let mut is_first = true;
             let f = &p.body.first().unwrap();
-            // for each symbol in the production body
             for t in &p.body {
-                if (t.name == "ident" || t.name == "string") && is_first {
+                if t.name == "ident" || t.name.contains("__") && is_first {
                     is_first = false;
-                    // is terminal
                     if tok_table.contains_key(&t.lexeme) {
                         if !first_sets[&p.head.lexeme].contains(&t.lexeme) {
-                            println!("inserting {} to {}", t.lexeme, &p.head.lexeme);
                             changed = true;
                             first_sets
                                 .get_mut(&p.head.lexeme)
                                 .unwrap()
                                 .push(t.lexeme.clone());
                         }
-                    }
-                    // is nonterminal
-                    else {
+                    } else if tok_table.contains_key(&t.name) {
+                        if !first_sets[&p.head.lexeme].contains(&t.name) {
+                            changed = true;
+                            first_sets
+                                .get_mut(&p.head.lexeme)
+                                .unwrap()
+                                .push(t.name.clone());
+                        }
+                    } else {
                         let old_copy: HashSet<String> =
                             first_sets[&p.head.lexeme].iter().cloned().collect();
                         let to_insert: HashSet<String> =
@@ -1444,25 +1322,226 @@ fn parse_productions(
             break;
         }
     }
-    println!("\n\nFirst Sets");
-    for s in &first_sets {
-        println!("{:?}", s);
+    first_sets
+}
+
+fn parse_productions(
+    path: &str,
+    tok_table: &mut HashMap<String, String>,
+    tokens: &mut Vec<CocolToken>,
+) -> Vec<Production> {
+    // generate parser
+    let mut title_found = false;
+    let mut parsing = false;
+    // let mut method = false;
+    let mut coco_scanner = CocorScanner::new(path);
+    let mut productions: Vec<Production> = Vec::new();
+    let mut curr_production = Vec::new();
+    let mut curr_head = cocor_scanner::Token::new(String::from(""), String::from(""));
+    // tokens that are valid for productions
+    let mut prod_tokens = HashSet::new();
+    prod_tokens.insert("br_open");
+    prod_tokens.insert("br_close");
+    prod_tokens.insert("sq_open");
+    prod_tokens.insert("sq_close");
+    prod_tokens.insert("p_open");
+    prod_tokens.insert("p_close");
+    prod_tokens.insert("union");
+    prod_tokens.insert("ident");
+    prod_tokens.insert("eq");
+    prod_tokens.insert("s_action");
+    loop {
+        match coco_scanner.next_token() {
+            Some(token) => {
+                if token.lexeme == "PRODUCTIONS" {
+                    title_found = true;
+                    continue;
+                }
+                if title_found {
+                    if token.name == "ident" && !parsing {
+                        parsing = true;
+                        if token.lexeme == "END" {
+                            break;
+                        }
+                        curr_head = token.clone();
+                    } else if parsing {
+                        if prod_tokens.contains(token.name.as_str()) {
+                            curr_production.push(token);
+                        } else if token.name == "string" {
+                            if !tok_table.contains_key(&token.lexeme) {
+                                let mut s = token.lexeme.clone();
+                                let mut regex = String::from(PARENTHESES_OPEN);
+                                s.remove(0);
+                                s.pop();
+                                regex.push_str(&format!(
+                                    "{}{}{}",
+                                    s, PARENTHESES_CLOSE, CONCAT_CHAR
+                                ));
+                                let new_name = String::from(&format!("__{}__", s.clone()));
+                                let new_token = cocor_scanner::Token::new(
+                                    new_name.clone(),
+                                    String::from(s.clone()),
+                                );
+                                tok_table.insert(new_name.clone(), token.lexeme.clone());
+                                let new_cocol_token =
+                                    CocolToken::new(tokens.len() as u32, new_name, regex);
+                                tokens.push(new_cocol_token);
+                                curr_production.push(new_token);
+                            } else {
+                                let mut s = token.lexeme.clone();
+                                s.remove(0);
+                                s.pop();
+                                let cocol_token = tokens.iter().find(|t| t.name == s).unwrap();
+                                curr_production.push(cocor_scanner::Token::new(
+                                    String::from(&format!("anon_token_{}", cocol_token.id)),
+                                    String::from(cocol_token.name.clone()),
+                                ));
+                            }
+                        } else if token.name == "p_end" {
+                            parsing = false;
+                            let mut new_prod =
+                                Production::new(curr_head.clone(), curr_production.clone(), false);
+                            // handle epsilon derivation
+                            let f = curr_production.first().unwrap();
+                            let l = curr_production.last().unwrap();
+                            if f.lexeme == "{" && l.lexeme == "}" {
+                                new_prod.derives_epsilon = true;
+                            }
+                            productions.push(new_prod);
+                            curr_production.clear();
+                        }
+                    }
+                }
+            }
+            _ => break,
+        }
     }
-    println!("\n");
+    productions
+}
 
-    // code.push_str("}\n");
-    // let filename = "./src/parser.rs";
-    // fs::write(filename, code).expect(&format!("Error writing file: {}.", filename));
+/// Transform EBNF to BNF
+///
+// fn ebnf_to_bnf(prods: &Vec<Production>) -> Vec<Production> {
+//     let mut productions = Vec::new();
+//     let mut changed = false;
 
-    // read input file
-    // println!("\n**************** Input file tokens ****************");
-    // let mut scanner = Scanner::new(&args[2]);
-    // loop {
-    //     match scanner.next_token() {
-    //         Some(token) => println!("{:?}", token),
-    //         _ => break,
-    //     }
-    // }
+//     loop {
+//         for prod in prods {
+//             for token in &prod.body {}
+//         }
+//         if !changed {
+//             break;
+//         }
+//     }
+
+//     productions
+// }
+
+fn generate_parser(
+    path: &str,
+    prods: &Vec<Production>,
+    tok_table: &HashMap<String, String>,
+    first: &HashMap<String, Vec<String>>,
+) {
+    let mut method = false;
+    let mut code = String::new();
+    code.push_str(
+        "
+use crate::scanner::{Scanner, Token};
+pub struct Parser {
+    pub next: Token,
+    pub curr: Token,
+    scanner: Scanner,
+}
+impl Parser {
+    pub fn new(path: &str) -> Parser {
+        Parser {
+            next: Token::empty(), 
+            curr: Token::empty(),
+            scanner: Scanner::new(path),
+        }
+    }
+
+    pub fn init(&mut self) {
+        self.curr = self.scanner.next_token().unwrap();
+        self.next = self.scanner.next_token().unwrap();
+        self.IdentList();
+    }
+
+    fn m(&mut self, t: &str) {
+        println!(\"comparing {} to {}\", self.next.name, t);
+        if self.next.name == t {
+            self.curr = self.next.clone();
+            match self.scanner.next_token() {
+                Some(token) => {
+                    self.next = token;
+                },
+                _ => self.next = Token::empty(),
+            }
+        }
+    }\n",
+    );
+
+    for p in prods {
+        code.push_str(&format!("fn {} (&mut self, ", p.head.lexeme));
+        for t in &p.body {
+            if t.name == "eq" {
+                code.push_str(") {");
+            } else if t.name == "br_open" {
+                let mut cond = String::new();
+                let f = first[&p.head.lexeme].clone();
+                for i in f {
+                    cond.push_str(&format!("self.next.name == \"{}\" ||", i));
+                }
+                cond.pop();
+                cond.pop();
+                code.push_str(&format!("while  self.next.name == \"__,__\" {{"));
+            } else if t.name == "br_close" {
+                code.push('}');
+            } else if t.name == "sq_open" {
+                code.push_str(&format!("while  (true) {{"));
+            } else if t.name == "sq_close" {
+                code.push('}');
+            } else if t.name == "p_open" {
+                code.push_str(&format!("while  (true) {{"));
+            } else if t.name == "p_close" {
+                code.push('}');
+            } else if t.name == "union" {
+            } else if t.name == "ident" {
+                // if t is terminal, match
+                if tok_table.contains_key(&t.lexeme) {
+                    code.push_str(&format!("self.m(\"{}\");", t.lexeme));
+                } else {
+                    method = true;
+                    code.push_str(&format!("self.{}(", t.lexeme));
+                }
+                continue;
+            } else if t.name.contains("__") {
+                code.push_str(&format!("self.m(\"{}\");", t.name));
+            } else if t.name == "s_action" {
+                let mut s = t.lexeme.clone();
+                s.remove(0);
+                s.remove(0);
+                s.pop();
+                s.pop();
+                code.push_str(&format!("{}", s));
+            } else if t.name == "attr" {
+                let mut s = t.lexeme.clone();
+                s.remove(0);
+                s.pop();
+                code.push_str(&format!("{}", s));
+            }
+            if method {
+                code.push_str(");");
+                method = false;
+            }
+        }
+        // close method body
+        code.push_str("}\n");
+    }
+    // close impl block
+    code.push_str("}\n");
+    fs::write(path, code).expect(&format!("Error writing file: {}.", path));
 }
 
 // *********************************************** Main ***********************************************
@@ -1511,7 +1590,27 @@ fn main() {
     );
 
     // initial parse of productions
-    parse_productions(&args[1], &mut tok_table, &mut tokens);
+    let productions = parse_productions(&args[1], &mut tok_table, &mut tokens);
+    println!("\n\nProductions...");
+    for p in &productions {
+        print!("{:?} => ", p.head.lexeme);
+        for token in &p.body {
+            print!(" {:?} ", token.name);
+        }
+        println!("({})", p.derives_epsilon);
+    }
+    println!();
+
+    // EBNF => BNF
+    // let bnf = ebnf_to_bnf(&productions);
+
+    // first sets calculation
+    let first = calc_first_sets(&productions, &tok_table);
+    println!("\n\nFirst Sets");
+    for (key, value) in &first {
+        println!("{:?} => {:?}", key, value);
+    }
+    println!("\n");
 
     // println!("*************** COCOL/R Scanner Generator ****************");
     // println!("* Reserved characters:");
@@ -1531,7 +1630,7 @@ fn main() {
     // println!("********************* TOKENS *************************");
     let mut regex = String::from(PARENTHESES_OPEN);
     for token in &tokens {
-        // println!("{:?}", token);
+        // println!("Token {{ id: {:?} | name: {:?} }}", token.id, token.name);
         // extend the current regular expression
         let mut rregex = token.regex.clone();
         let mut count = 1;
@@ -1583,4 +1682,19 @@ fn main() {
         &whitespace,
     );
     println!("Scanner ({}) written correctly.", scanner_path);
+    let parser_path = "./src/parser.rs";
+    generate_parser(parser_path, &productions, &tok_table, &first);
+    println!("Parser ({}) written correctly.", parser_path);
+
+    // println!("\nInput File Tokens");
+    // let mut scanner = scanner::Scanner::new(&args[2]);
+    // loop {
+    //     match scanner.next_token() {
+    //         Some(token) => println!("{:?}", token),
+    //         _ => break,
+    //     }
+    // }
+
+    let mut parser = parser::Parser::new(&args[2]);
+    parser.init();
 }

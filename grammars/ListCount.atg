@@ -1,0 +1,17 @@
+COMPILER List
+
+CHARACTERS
+letter   = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz".
+digit    = "0123456789".
+
+TOKENS
+ident = letter { letter | digit }.
+
+PRODUCTIONS
+IdentList =
+    ident         (. let mut n = 1; .)
+    {"," ident    (. n += 1; .)
+    }             (. println!("n = {}", n) .)
+    .
+
+END List
