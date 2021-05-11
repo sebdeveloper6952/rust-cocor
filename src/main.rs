@@ -1686,15 +1686,6 @@ fn main() {
     generate_parser(parser_path, &productions, &tok_table, &first);
     println!("Parser ({}) written correctly.", parser_path);
 
-    // println!("\nInput File Tokens");
-    // let mut scanner = scanner::Scanner::new(&args[2]);
-    // loop {
-    //     match scanner.next_token() {
-    //         Some(token) => println!("{:?}", token),
-    //         _ => break,
-    //     }
-    // }
-
     let mut parser = parser::Parser::new(&args[2]);
     parser.init();
 }
