@@ -1309,13 +1309,20 @@ fn calc_first_sets(
 
                 // check for next token
                 i += 1;
-                if i < p.body.len() - 1 {
-                    let n = p.body.get(i).unwrap();
-                    if n.name == "union" || n.name == "sq_close" {
-                        i += 1;
+                let mut n = p.body.get(i).unwrap();
+                while i < p.body.len() - 1 {
+                    n = p.body.get(i).unwrap();
+                    if n.name == "s_action" || n.name == "attr" {
+                        i+=1;
                     } else {
                         break;
                     }
+                }
+                let n = p.body.get(i).unwrap();
+                if n.name == "union" || n.name == "sq_close" {
+                    i += 1;
+                } else {
+                    break;
                 }
             }
         }
@@ -1349,9 +1356,9 @@ fn parse_productions(
     prod_tokens.insert("p_close");
     prod_tokens.insert("union");
     prod_tokens.insert("ident");
-    // prod_tokens.insert("eq");
-    // prod_tokens.insert("s_action");
-    // prod_tokens.insert("attr");
+    prod_tokens.insert("eq");
+    prod_tokens.insert("s_action");
+    prod_tokens.insert("attr");
     loop {
         match coco_scanner.next_token() {
             Some(token) => {
@@ -1439,59 +1446,76 @@ fn generate_parser(
     tok_table: &HashMap<String, String>,
     first: &HashMap<String, Vec<String>>,
 ) {
+    let initial_symbol = prods.first().unwrap().head.lexeme.clone();
     let mut method = false;
     let mut code = String::new();
-    code.push_str(
-        "
-use crate::scanner::{Scanner, Token};
-pub struct Parser {
+    code.push_str(&format!(
+        "use crate::scanner::{{Scanner, Token}};
+pub struct Parser {{
     pub next: Token,
     pub curr: Token,
     scanner: Scanner,
-}
-impl Parser {
-    pub fn new(path: &str) -> Parser {
-        Parser {
+}}
+impl Parser {{
+    pub fn new(path: &str) -> Parser {{
+        Parser {{
             next: Token::empty(), 
             curr: Token::empty(),
             scanner: Scanner::new(path),
-        }
-    }
+        }}
+    }}
 
-    pub fn init(&mut self) {
-        self.curr = self.scanner.next_token().unwrap();
+    pub fn init(&mut self) {{
+        self.curr = Token::empty();
         self.next = self.scanner.next_token().unwrap();
-        self.IdentList();
-    }
+        self.{}();
+    }}
 
-    fn m(&mut self, t: &str) {
-        println!(\"comparing {} to {}\", self.next.name, t);
-        if self.next.name == t {
+    fn m(&mut self, t: &str) {{
+        println!(\"next {{}} t {{}}\", self.next.lexeme, t);
+        if self.next.name == t {{
             self.curr = self.next.clone();
-            match self.scanner.next_token() {
-                Some(token) => {
+            match self.scanner.next_token() {{
+                Some(token) => {{
                     self.next = token;
-                },
+                }},
                 _ => self.next = Token::empty(),
-            }
-        }
-    }\n",
-    );
+            }}
+        }} else {{
+            println!(\"ERROR: next {{}} t {{}}\", self.next.lexeme, t);
+            panic!(\"input error!\");
+        }}
+    }}\n",
+    initial_symbol));
 
     for p in prods {
-        code.push_str(&format!("fn {} (&mut self, ", p.head.lexeme));
-        for t in &p.body {
+        code.push_str(&format!("fn {} (&mut self", p.head.lexeme));
+        let mut curr_index = 0;
+        while curr_index < p.body.len() {
+            let t = p.body.get(curr_index).unwrap();
             if t.name == "eq" {
                 code.push_str(") {");
             } else if t.name == "br_open" {
-                let mut cond = String::new();
-                let f = first[&p.head.lexeme].clone();
-                for i in f {
-                    cond.push_str(&format!("self.next.name == \"{}\" ||", i));
+                let mut j = curr_index + 1;
+                let mut next_token = p.body.get(j).unwrap();
+                while next_token.name != "ident" && !next_token.name.contains("__") {
+                    j += 1;
                 }
-                cond.pop();
-                cond.pop();
-                code.push_str(&format!("while  self.next.name == \"__,__\" {{"));
+                let mut cond = String::new();
+                if tok_table.contains_key(&next_token.lexeme) {
+                    cond.push_str(&format!("self.next.name == \"{}\"", next_token.lexeme));
+                }
+                else if next_token.name.contains("__") {
+                    cond.push_str(&format!("self.next.name == \"{}\"", next_token.name));
+                } else {
+                    let f = first[&next_token.lexeme].clone();
+                    for i in f {
+                        cond.push_str(&format!("self.next.name == \"{}\" ||", i));
+                    }
+                    cond.pop();
+                    cond.pop();
+                }
+                code.push_str(&format!("while {} {{", cond));
             } else if t.name == "br_close" {
                 code.push('}');
             } else if t.name == "sq_open" {
@@ -1503,6 +1527,10 @@ impl Parser {
             } else if t.name == "p_close" {
                 code.push('}');
             } else if t.name == "union" {
+                let prev = p.body.get(curr_index - 1).unwrap();
+                code.push_str(&format!("match self.next.name {{
+                    {}
+                }}", prev.lexeme.clone()));
             } else if t.name == "ident" {
                 // if t is terminal, match
                 if tok_table.contains_key(&t.lexeme) {
@@ -1510,8 +1538,21 @@ impl Parser {
                 } else {
                     method = true;
                     code.push_str(&format!("self.{}(", t.lexeme));
+                    curr_index += 1;
+                    match p.body.get(curr_index) {
+                        Some(token) => {
+                            if token.name == "attr" {
+                                let mut s = token.lexeme.clone();
+                                s.remove(0);
+                                s.pop();
+                                code.push_str(&format!(",{}", s));
+                            }
+                            code.push_str(");")
+                        },
+                        _ => (),
+                    }
+                    continue;
                 }
-                continue;
             } else if t.name.contains("__") {
                 code.push_str(&format!("self.m(\"{}\");", t.name));
             } else if t.name == "s_action" {
@@ -1521,16 +1562,8 @@ impl Parser {
                 s.pop();
                 s.pop();
                 code.push_str(&format!("{}", s));
-            } else if t.name == "attr" {
-                let mut s = t.lexeme.clone();
-                s.remove(0);
-                s.pop();
-                code.push_str(&format!("{}", s));
             }
-            if method {
-                code.push_str(");");
-                method = false;
-            }
+            curr_index += 1;
         }
         // close method body
         code.push_str("}\n");
@@ -1626,7 +1659,7 @@ fn main() {
     // println!("********************* TOKENS *************************");
     let mut regex = String::from(PARENTHESES_OPEN);
     for token in &tokens {
-        // println!("Token {{ id: {:?} | name: {:?} }}", token.id, token.name);
+        println!("Token {{ id: {:?} | name: {:?} }}", token.id, token.name);
         // extend the current regular expression
         let mut rregex = token.regex.clone();
         let mut count = 1;
@@ -1657,31 +1690,39 @@ fn main() {
     let tree_root = parse_regex(&proc_regex, &mut fp_table, &mut pos_table);
 
     // regex -> dfa
-    // let mut accepting_states: HashMap<u32, CocolToken> = HashMap::new();
-    // let direct_dfa = regex_dfa(
-    //     &fp_table,
-    //     &pos_table,
-    //     &tokens,
-    //     &mut accepting_states,
-    //     &tree_root,
-    //     &alphabet,
-    // );
+    let mut accepting_states: HashMap<u32, CocolToken> = HashMap::new();
+    let direct_dfa = regex_dfa(
+        &fp_table,
+        &pos_table,
+        &tokens,
+        &mut accepting_states,
+        &tree_root,
+        &alphabet,
+    );
 
     // code generation
-    // let scanner_path = "./src/scanner.rs";
-    // generate_scanner(
-    //     scanner_path,
-    //     &direct_dfa,
-    //     &accepting_states,
-    //     &keywords,
-    //     &except_table,
-    //     &whitespace,
-    // );
-    // println!("Scanner ({}) written correctly.", scanner_path);
-    // let parser_path = "./src/parser.rs";
-    // generate_parser(parser_path, &productions, &tok_table, &first);
-    // println!("Parser ({}) written correctly.", parser_path);
+    let scanner_path = "./src/scanner.rs";
+    generate_scanner(
+        scanner_path,
+        &direct_dfa,
+        &accepting_states,
+        &keywords,
+        &except_table,
+        &whitespace,
+    );
+    println!("Scanner ({}) written correctly.", scanner_path);
+    let parser_path = "./src/parser.rs";
+    generate_parser(parser_path, &productions, &tok_table, &first);
+    println!("Parser ({}) written correctly.", parser_path);
 
-    // let mut parser = parser::Parser::new(&args[2]);
-    // parser.init();
+    let mut scanner = Scanner::new(&args[2]);
+    loop {
+        match scanner.next_token() {
+            Some(token) => println!("{:?}", token),
+            None => break,
+        }
+    }
+
+    let mut parser = parser::Parser::new(&args[2]);
+    parser.init();
 }
