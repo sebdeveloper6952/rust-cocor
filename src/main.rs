@@ -1247,25 +1247,16 @@ impl Scanner {
 struct Production {
     head: cocor_scanner::Token,
     body: Vec<cocor_scanner::Token>,
-    derives_epsilon: bool,
 }
 
 impl Production {
-    fn new(
-        head: cocor_scanner::Token,
-        body: Vec<cocor_scanner::Token>,
-        derives_epsilon: bool,
-    ) -> Production {
-        Production {
-            head,
-            body,
-            derives_epsilon,
-        }
+    fn new(head: cocor_scanner::Token, body: Vec<cocor_scanner::Token>) -> Production {
+        Production { head, body }
     }
 }
 
 /**
- *
+ * Calculate the FIRST sets of the given productions.
  */
 fn calc_first_sets(
     prods: &Vec<Production>,
@@ -1278,43 +1269,53 @@ fn calc_first_sets(
     loop {
         let mut changed = false;
         for p in prods {
-            let mut is_first = true;
-            let f = &p.body.first().unwrap();
-            for t in &p.body {
-                if t.name == "ident" || t.name.contains("__") && is_first {
-                    is_first = false;
-                    if tok_table.contains_key(&t.lexeme) {
-                        if !first_sets[&p.head.lexeme].contains(&t.lexeme) {
-                            changed = true;
-                            first_sets
-                                .get_mut(&p.head.lexeme)
-                                .unwrap()
-                                .push(t.lexeme.clone());
-                        }
-                    } else if tok_table.contains_key(&t.name) {
-                        if !first_sets[&p.head.lexeme].contains(&t.name) {
-                            changed = true;
-                            first_sets
-                                .get_mut(&p.head.lexeme)
-                                .unwrap()
-                                .push(t.name.clone());
-                        }
-                    } else {
-                        let old_copy: HashSet<String> =
-                            first_sets[&p.head.lexeme].iter().cloned().collect();
-                        let to_insert: HashSet<String> =
-                            first_sets[&t.lexeme].iter().cloned().collect();
-                        let new_set: HashSet<String> =
-                            old_copy.union(&to_insert).map(|s| s.clone()).collect();
-                        if !new_set.eq(&old_copy) {
-                            changed = true;
-                            first_sets.insert(p.head.lexeme.clone(), new_set.into_iter().collect());
-                        }
+            // get first token
+            let mut i = 0;
+            while i < p.body.len() {
+                let t = p.body.get(i).unwrap();
+                if t.name != "ident" && !t.name.contains("__") {
+                    i += 1;
+                    continue;
+                }
+                // check token
+                if tok_table.contains_key(&t.lexeme) {
+                    if !first_sets[&p.head.lexeme].contains(&t.lexeme) {
+                        changed = true;
+                        first_sets
+                            .get_mut(&p.head.lexeme)
+                            .unwrap()
+                            .push(t.lexeme.clone());
                     }
-                } else if (f.name == "p_open" || f.name == "sq_open" || f.name == "br_open")
-                    && (t.name == "union" || t.name == "p_open")
-                {
-                    is_first = true;
+                } else if tok_table.contains_key(&t.name) {
+                    if !first_sets[&p.head.lexeme].contains(&t.name) {
+                        changed = true;
+                        first_sets
+                            .get_mut(&p.head.lexeme)
+                            .unwrap()
+                            .push(t.name.clone());
+                    }
+                } else {
+                    let old_copy: HashSet<String> =
+                        first_sets[&p.head.lexeme].iter().cloned().collect();
+                    let to_insert: HashSet<String> =
+                        first_sets[&t.lexeme].iter().cloned().collect();
+                    let new_set: HashSet<String> =
+                        old_copy.union(&to_insert).map(|s| s.clone()).collect();
+                    if !new_set.eq(&old_copy) {
+                        changed = true;
+                        first_sets.insert(p.head.lexeme.clone(), new_set.into_iter().collect());
+                    }
+                }
+
+                // check for next token
+                i += 1;
+                if i < p.body.len() - 1 {
+                    let n = p.body.get(i).unwrap();
+                    if n.name == "union" || n.name == "sq_close" {
+                        i += 1;
+                    } else {
+                        break;
+                    }
                 }
             }
         }
@@ -1348,8 +1349,9 @@ fn parse_productions(
     prod_tokens.insert("p_close");
     prod_tokens.insert("union");
     prod_tokens.insert("ident");
-    prod_tokens.insert("eq");
-    prod_tokens.insert("s_action");
+    // prod_tokens.insert("eq");
+    // prod_tokens.insert("s_action");
+    // prod_tokens.insert("attr");
     loop {
         match coco_scanner.next_token() {
             Some(token) => {
@@ -1399,14 +1401,8 @@ fn parse_productions(
                             }
                         } else if token.name == "p_end" {
                             parsing = false;
-                            let mut new_prod =
-                                Production::new(curr_head.clone(), curr_production.clone(), false);
-                            // handle epsilon derivation
-                            let f = curr_production.first().unwrap();
-                            let l = curr_production.last().unwrap();
-                            if f.lexeme == "{" && l.lexeme == "}" {
-                                new_prod.derives_epsilon = true;
-                            }
+                            let new_prod =
+                                Production::new(curr_head.clone(), curr_production.clone());
                             productions.push(new_prod);
                             curr_production.clear();
                         }
@@ -1597,7 +1593,7 @@ fn main() {
         for token in &p.body {
             print!(" {:?} ", token.name);
         }
-        println!("({})", p.derives_epsilon);
+        println!();
     }
     println!();
 
@@ -1661,31 +1657,31 @@ fn main() {
     let tree_root = parse_regex(&proc_regex, &mut fp_table, &mut pos_table);
 
     // regex -> dfa
-    let mut accepting_states: HashMap<u32, CocolToken> = HashMap::new();
-    let direct_dfa = regex_dfa(
-        &fp_table,
-        &pos_table,
-        &tokens,
-        &mut accepting_states,
-        &tree_root,
-        &alphabet,
-    );
+    // let mut accepting_states: HashMap<u32, CocolToken> = HashMap::new();
+    // let direct_dfa = regex_dfa(
+    //     &fp_table,
+    //     &pos_table,
+    //     &tokens,
+    //     &mut accepting_states,
+    //     &tree_root,
+    //     &alphabet,
+    // );
 
     // code generation
-    let scanner_path = "./src/scanner.rs";
-    generate_scanner(
-        scanner_path,
-        &direct_dfa,
-        &accepting_states,
-        &keywords,
-        &except_table,
-        &whitespace,
-    );
-    println!("Scanner ({}) written correctly.", scanner_path);
-    let parser_path = "./src/parser.rs";
-    generate_parser(parser_path, &productions, &tok_table, &first);
-    println!("Parser ({}) written correctly.", parser_path);
+    // let scanner_path = "./src/scanner.rs";
+    // generate_scanner(
+    //     scanner_path,
+    //     &direct_dfa,
+    //     &accepting_states,
+    //     &keywords,
+    //     &except_table,
+    //     &whitespace,
+    // );
+    // println!("Scanner ({}) written correctly.", scanner_path);
+    // let parser_path = "./src/parser.rs";
+    // generate_parser(parser_path, &productions, &tok_table, &first);
+    // println!("Parser ({}) written correctly.", parser_path);
 
-    let mut parser = parser::Parser::new(&args[2]);
-    parser.init();
+    // let mut parser = parser::Parser::new(&args[2]);
+    // parser.init();
 }
