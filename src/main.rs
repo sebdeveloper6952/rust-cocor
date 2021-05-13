@@ -1585,6 +1585,77 @@ impl Parser {{
     fs::write(path, code).expect(&format!("Error writing file: {}.", path));
 }
 
+struct PNode<T> {
+    t: T,
+}
+
+///
+///
+fn create_prod_tree(prod: &Production) {
+    let mut output:Vec<cocor_scanner::Token> = Vec::new();
+    let mut op:Vec<cocor_scanner::Token> = Vec::new();
+    let mut p = HashMap::new();
+    p.insert("union", 3);
+    p.insert("br_close", 2);
+    p.insert("sq_close", 1);
+    p.insert("p_close", 0);
+    p.insert("br_open", 2);
+    p.insert("sq_open", 1);
+    p.insert("p_open", 0);
+
+    for t in &prod.body {
+        print!("processing token {}", t.name);
+        if t.name == "ident" || t.name.contains("__") {
+            print!(", pushing to output 1 {}", t.name);
+            output.push(t.clone());
+        } else if t.name == "br_close" {
+            // pop operators from op_stack until matching { is found
+            while op.len() > 0 && op.last().unwrap().name != "br_open" {
+                print!(", popping op 1: {}", op.last().unwrap().name);
+                output.push(op.pop().unwrap().clone());
+            }
+            if op.len() > 0 {
+                print!(", removing {}", op.last().unwrap().name);
+                op.pop().unwrap();
+            }
+            // if there is a greater precedence token, pop to output
+            while op.len() > 0 && op.last().unwrap().name != "br_open" && p[op.last().unwrap().name.as_str()] >= p[t.name.as_str()] {
+                print!(", pushing to output 3 {}", op.last().unwrap().name);
+                output.push(op.pop().unwrap().clone());
+            }
+            print!(", pushing op: {}", t.name);
+            op.push(t.clone());
+        } else if t.name.contains("open") {
+            // if there is a greater precedence token, pop to output
+            while op.len() > 0 && op.last().unwrap().name != "br_open" && p[op.last().unwrap().name.as_str()] >= p[t.name.as_str()] {
+                print!(", pushing to output 4 {}", op.last().unwrap().name);
+                output.push(op.pop().unwrap().clone());
+            }
+            print!(", pushing to output and op_stack {}", t.name);
+            output.push(t.clone());
+            op.push(t.clone());
+        } else if t.name == "union" {
+            // if there is a greater precedence token, pop to output
+            while op.len() > 0 && p[op.last().unwrap().name.as_str()] >= p[t.name.as_str()] {
+                print!(", pushing to output 4 {}", op.last().unwrap().name);
+                output.push(op.pop().unwrap().clone());
+            }
+            op.push(t.clone());
+        }
+        println!();
+    }
+    while op.len() > 0 {
+        println!("final push to output {}", op.last().unwrap().name);
+        output.push(op.pop().unwrap());
+    }
+
+    print!("{} => ", prod.head.lexeme);
+    for i in output {
+        print!("{:?} ", i.lexeme);
+    }
+    println!();
+}
+
 // *********************************************** Main ***********************************************
 fn main() {
     // program arguments
@@ -1714,28 +1785,32 @@ fn main() {
     }
     println!("\n");
 
-    // code generation
-    let scanner_path = "./src/scanner.rs";
-    generate_scanner(
-        scanner_path,
-        &direct_dfa,
-        &accepting_states,
-        &keywords,
-        &except_table,
-        &whitespace,
-    );
-    println!("Scanner ({}) written correctly.", scanner_path);
-    let parser_path = "./src/parser.rs";
-    generate_parser(parser_path, &productions, &tok_table, &first);
-    println!("Parser ({}) written correctly.", parser_path);
-
-    let mut scanner = Scanner::new(&args[2]);
-    loop {
-        match scanner.next_token() {
-            Some(token) => println!("{:?}", token),
-            None => break,
-        }
+    for p in &productions {
+        create_prod_tree(p);
     }
+
+    // code generation
+    // let scanner_path = "./src/scanner.rs";
+    // generate_scanner(
+    //     scanner_path,
+    //     &direct_dfa,
+    //     &accepting_states,
+    //     &keywords,
+    //     &except_table,
+    //     &whitespace,
+    // );
+    // println!("Scanner ({}) written correctly.", scanner_path);
+    // let parser_path = "./src/parser.rs";
+    // generate_parser(parser_path, &productions, &tok_table, &first);
+    // println!("Parser ({}) written correctly.", parser_path);
+
+    // let mut scanner = Scanner::new(&args[2]);
+    // loop {
+    //     match scanner.next_token() {
+    //         Some(token) => println!("{:?}", token),
+    //         None => break,
+    //     }
+    // }
 
     // let mut parser = parser::Parser::new(&args[2]);
     // parser.init();

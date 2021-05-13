@@ -40,7 +40,6 @@ Term<result: &mut f32>=			(.let mut result1:f32 = 0.0; let mut result2:f32 = 0.0
 	}							    (.result=result1;.)
 	.
 
-
 Factor<result: &mut f32> =		(.let mut sign: f32 = 1.0;.)
 	["-"						    (.sign = -1.0;.)
 	]
