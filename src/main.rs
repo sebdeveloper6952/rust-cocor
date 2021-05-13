@@ -1313,7 +1313,7 @@ fn calc_first_sets(
                 while i < p.body.len() - 1 {
                     n = p.body.get(i).unwrap();
                     if n.name == "s_action" || n.name == "attr" {
-                        i+=1;
+                        i += 1;
                     } else {
                         break;
                     }
@@ -1486,7 +1486,8 @@ impl Parser {{
             panic!(\"input error!\");
         }}
     }}\n",
-    initial_symbol));
+        initial_symbol
+    ));
 
     for p in prods {
         code.push_str(&format!("fn {} (&mut self", p.head.lexeme));
@@ -1496,16 +1497,24 @@ impl Parser {{
             if t.name == "eq" {
                 code.push_str(") {");
             } else if t.name == "br_open" {
+                // output while
+                // code.push_str(&format!("while "));
+                // get next token and compute FIRST of next token
+                // output conditionals for each terminal in FIRST
+                // keep looking forward until } is reached
+                // if | is found, check next and output FIRST to loop conditional. Save in bool that | was found.
+                // if br_close, output {
+
                 let mut j = curr_index + 1;
                 let mut next_token = p.body.get(j).unwrap();
                 while next_token.name != "ident" && !next_token.name.contains("__") {
                     j += 1;
+                    next_token = p.body.get(j).unwrap();
                 }
                 let mut cond = String::new();
                 if tok_table.contains_key(&next_token.lexeme) {
                     cond.push_str(&format!("self.next.name == \"{}\"", next_token.lexeme));
-                }
-                else if next_token.name.contains("__") {
+                } else if next_token.name.contains("__") {
                     cond.push_str(&format!("self.next.name == \"{}\"", next_token.name));
                 } else {
                     let f = first[&next_token.lexeme].clone();
@@ -1528,9 +1537,12 @@ impl Parser {{
                 code.push('}');
             } else if t.name == "union" {
                 let prev = p.body.get(curr_index - 1).unwrap();
-                code.push_str(&format!("match self.next.name {{
+                code.push_str(&format!(
+                    "match self.next.name {{
                     {}
-                }}", prev.lexeme.clone()));
+                }}",
+                    prev.lexeme.clone()
+                ));
             } else if t.name == "ident" {
                 // if t is terminal, match
                 if tok_table.contains_key(&t.lexeme) {
@@ -1545,10 +1557,10 @@ impl Parser {{
                                 let mut s = token.lexeme.clone();
                                 s.remove(0);
                                 s.pop();
-                                code.push_str(&format!(",{}", s));
+                                code.push_str(&format!("{}", s));
                             }
                             code.push_str(");")
-                        },
+                        }
                         _ => (),
                     }
                     continue;
@@ -1620,26 +1632,12 @@ fn main() {
 
     // initial parse of productions
     let productions = parse_productions(&args[1], &mut tok_table, &mut tokens);
-    println!("\n\nProductions...");
-    for p in &productions {
-        print!("{:?} => ", p.head.lexeme);
-        for token in &p.body {
-            print!(" {:?} ", token.name);
-        }
-        println!();
-    }
-    println!();
 
     // EBNF => BNF
     // let bnf = ebnf_to_bnf(&productions);
 
     // first sets calculation
     let first = calc_first_sets(&productions, &tok_table);
-    println!("\n\nFirst Sets");
-    for (key, value) in &first {
-        println!("{:?} => {:?}", key, value);
-    }
-    println!("\n");
 
     // println!("*************** COCOL/R Scanner Generator ****************");
     // println!("* Reserved characters:");
@@ -1659,7 +1657,6 @@ fn main() {
     // println!("********************* TOKENS *************************");
     let mut regex = String::from(PARENTHESES_OPEN);
     for token in &tokens {
-        println!("Token {{ id: {:?} | name: {:?} }}", token.id, token.name);
         // extend the current regular expression
         let mut rregex = token.regex.clone();
         let mut count = 1;
@@ -1700,6 +1697,23 @@ fn main() {
         &alphabet,
     );
 
+    // TODO remove
+    println!("\n\nProductions...");
+    for p in &productions {
+        print!("{:?} => ", p.head.lexeme);
+        for token in &p.body {
+            print!(" {:?} ", token.name);
+        }
+        println!();
+    }
+    println!();
+
+    println!("\n\nFirst Sets");
+    for (key, value) in &first {
+        println!("{:?} => {:?}", key, value);
+    }
+    println!("\n");
+
     // code generation
     let scanner_path = "./src/scanner.rs";
     generate_scanner(
@@ -1723,6 +1737,6 @@ fn main() {
         }
     }
 
-    let mut parser = parser::Parser::new(&args[2]);
-    parser.init();
+    // let mut parser = parser::Parser::new(&args[2]);
+    // parser.init();
 }
