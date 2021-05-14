@@ -1447,7 +1447,6 @@ fn generate_parser(
     first: &HashMap<String, Vec<String>>,
 ) {
     let initial_symbol = prods.first().unwrap().head.lexeme.clone();
-    let mut method = false;
     let mut code = String::new();
     code.push_str(&format!(
         "use crate::scanner::{{Scanner, Token}};
@@ -1498,33 +1497,53 @@ impl Parser {{
                 code.push_str(") {");
             } else if t.name == "br_open" {
                 // output while
-                // code.push_str(&format!("while "));
-                // get next token and compute FIRST of next token
-                // output conditionals for each terminal in FIRST
-                // keep looking forward until } is reached
-                // if | is found, check next and output FIRST to loop conditional. Save in bool that | was found.
-                // if br_close, output {
-
-                let mut j = curr_index + 1;
-                let mut next_token = p.body.get(j).unwrap();
-                while next_token.name != "ident" && !next_token.name.contains("__") {
-                    j += 1;
-                    next_token = p.body.get(j).unwrap();
-                }
-                let mut cond = String::new();
-                if tok_table.contains_key(&next_token.lexeme) {
-                    cond.push_str(&format!("self.next.name == \"{}\"", next_token.lexeme));
-                } else if next_token.name.contains("__") {
-                    cond.push_str(&format!("self.next.name == \"{}\"", next_token.name));
-                } else {
-                    let f = first[&next_token.lexeme].clone();
-                    for i in f {
-                        cond.push_str(&format!("self.next.name == \"{}\" ||", i));
+                code.push_str("while ");
+                let mut acc: Vec<cocor_scanner::Token> = Vec::new();
+                let mut local_i = curr_index + 1;
+                let mut union_found = false;
+                loop {
+                    let token = p.body.get(local_i).unwrap();
+                    if token.name == "ident" || token.name.contains("__") {
+                        acc.push(token.clone());
+                    } else if token.name == "union" {
+                        // output conditionals and keep looking
+                        union_found = true;
+                        let fi = acc.first().unwrap();
+                        if tok_table.contains_key(&fi.name) {
+                            code.push_str(&format!("self.next.name == \"{}\"||", fi.name));
+                        } else if tok_table.contains_key(&fi.lexeme) {
+                            code.push_str(&format!("self.next.name == \"{}\"||", &fi.lexeme));
+                        } else {
+                            let f = first[&fi.lexeme].clone();
+                            for i in f {
+                                code.push_str(&format!("self.next.name == \"{}\"||", i));
+                            }
+                            code.drain(code.len() - 2..code.len());
+                        }
+                        local_i += 1;
+                        continue;
+                    } else if token.name.contains("close") || token.name.contains("open") {
+                        // output conditionals and break
+                        let fi = acc.first().unwrap();
+                        if tok_table.contains_key(&fi.name) {
+                            code.push_str(&format!("self.next.name == \"{}\"", fi.name));
+                        } else if tok_table.contains_key(&fi.lexeme) {
+                            code.push_str(&format!("self.next.name == \"{}\"", &fi.lexeme));
+                        } else {
+                            let f = first[&fi.lexeme].clone();
+                            for i in f {
+                                code.push_str(&format!("self.next.name == \"{}\"||", i));
+                            }
+                            code.drain(code.len() - 2..code.len());
+                        }
+                        break;
                     }
-                    cond.pop();
-                    cond.pop();
+                    local_i += 1;
                 }
-                code.push_str(&format!("while {} {{", cond));
+                if union_found {
+                    curr_index = local_i;
+                }
+                code.push('{');
             } else if t.name == "br_close" {
                 code.push('}');
             } else if t.name == "sq_open" {
@@ -1544,11 +1563,9 @@ impl Parser {{
                     prev.lexeme.clone()
                 ));
             } else if t.name == "ident" {
-                // if t is terminal, match
                 if tok_table.contains_key(&t.lexeme) {
                     code.push_str(&format!("self.m(\"{}\");", t.lexeme));
                 } else {
-                    method = true;
                     code.push_str(&format!("self.{}(", t.lexeme));
                     curr_index += 1;
                     match p.body.get(curr_index) {
@@ -1559,7 +1576,8 @@ impl Parser {{
                                 s.pop();
                                 code.push_str(&format!("{}", s));
                             }
-                            code.push_str(");")
+                            code.push_str(");");
+                            curr_index += 1;
                         }
                         _ => (),
                     }
@@ -1569,11 +1587,14 @@ impl Parser {{
                 code.push_str(&format!("self.m(\"{}\");", t.name));
             } else if t.name == "s_action" {
                 let mut s = t.lexeme.clone();
-                s.remove(0);
-                s.remove(0);
-                s.pop();
-                s.pop();
+                s.drain(0..2);
+                s.drain(s.len() - 2..s.len());
                 code.push_str(&format!("{}", s));
+            } else if t.name == "attr" {
+                let mut s = t.lexeme.clone();
+                s.pop();
+                s.remove(0);
+                code.push_str(&format!(",{}", s));
             }
             curr_index += 1;
         }
@@ -1585,15 +1606,11 @@ impl Parser {{
     fs::write(path, code).expect(&format!("Error writing file: {}.", path));
 }
 
-struct PNode<T> {
-    t: T,
-}
-
 ///
 ///
 fn create_prod_tree(prod: &Production) {
-    let mut output:Vec<cocor_scanner::Token> = Vec::new();
-    let mut op:Vec<cocor_scanner::Token> = Vec::new();
+    let mut output: Vec<cocor_scanner::Token> = Vec::new();
+    let mut op: Vec<cocor_scanner::Token> = Vec::new();
     let mut p = HashMap::new();
     p.insert("union", 3);
     p.insert("br_close", 2);
@@ -1619,7 +1636,10 @@ fn create_prod_tree(prod: &Production) {
                 op.pop().unwrap();
             }
             // if there is a greater precedence token, pop to output
-            while op.len() > 0 && op.last().unwrap().name != "br_open" && p[op.last().unwrap().name.as_str()] >= p[t.name.as_str()] {
+            while op.len() > 0
+                && op.last().unwrap().name != "br_open"
+                && p[op.last().unwrap().name.as_str()] >= p[t.name.as_str()]
+            {
                 print!(", pushing to output 3 {}", op.last().unwrap().name);
                 output.push(op.pop().unwrap().clone());
             }
@@ -1627,7 +1647,10 @@ fn create_prod_tree(prod: &Production) {
             op.push(t.clone());
         } else if t.name.contains("open") {
             // if there is a greater precedence token, pop to output
-            while op.len() > 0 && op.last().unwrap().name != "br_open" && p[op.last().unwrap().name.as_str()] >= p[t.name.as_str()] {
+            while op.len() > 0
+                && op.last().unwrap().name != "br_open"
+                && p[op.last().unwrap().name.as_str()] >= p[t.name.as_str()]
+            {
                 print!(", pushing to output 4 {}", op.last().unwrap().name);
                 output.push(op.pop().unwrap().clone());
             }
@@ -1785,9 +1808,10 @@ fn main() {
     }
     println!("\n");
 
-    for p in &productions {
-        create_prod_tree(p);
-    }
+    // TODO remvoe
+    // for p in &productions {
+    //     create_prod_tree(p);
+    // }
 
     // code generation
     // let scanner_path = "./src/scanner.rs";
@@ -1800,9 +1824,9 @@ fn main() {
     //     &whitespace,
     // );
     // println!("Scanner ({}) written correctly.", scanner_path);
-    // let parser_path = "./src/parser.rs";
-    // generate_parser(parser_path, &productions, &tok_table, &first);
-    // println!("Parser ({}) written correctly.", parser_path);
+    let parser_path = "./src/parser.rs";
+    generate_parser(parser_path, &productions, &tok_table, &first);
+    println!("Parser ({}) written correctly.", parser_path);
 
     // let mut scanner = Scanner::new(&args[2]);
     // loop {
