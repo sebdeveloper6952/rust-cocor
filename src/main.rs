@@ -1488,195 +1488,301 @@ impl Parser {{
         initial_symbol
     ));
 
+    // for each production
     for p in prods {
-        code.push_str(&format!("fn {} (&mut self", p.head.lexeme));
-        let mut curr_index = 0;
-        while curr_index < p.body.len() {
-            let t = p.body.get(curr_index).unwrap();
-            if t.name == "eq" {
-                code.push_str(") {");
-            } else if t.name == "br_open" {
-                // output while
-                code.push_str("while ");
-                let mut acc: Vec<cocor_scanner::Token> = Vec::new();
-                let mut local_i = curr_index + 1;
-                let mut union_found = false;
-                loop {
-                    let token = p.body.get(local_i).unwrap();
-                    if token.name == "ident" || token.name.contains("__") {
-                        acc.push(token.clone());
-                    } else if token.name == "union" {
-                        // output conditionals and keep looking
-                        union_found = true;
-                        let fi = acc.first().unwrap();
-                        if tok_table.contains_key(&fi.name) {
-                            code.push_str(&format!("self.next.name == \"{}\"||", fi.name));
-                        } else if tok_table.contains_key(&fi.lexeme) {
-                            code.push_str(&format!("self.next.name == \"{}\"||", &fi.lexeme));
-                        } else {
-                            let f = first[&fi.lexeme].clone();
-                            for i in f {
-                                code.push_str(&format!("self.next.name == \"{}\"||", i));
-                            }
-                            code.drain(code.len() - 2..code.len());
-                        }
-                        local_i += 1;
-                        continue;
-                    } else if token.name.contains("close") || token.name.contains("open") {
-                        // output conditionals and break
-                        let fi = acc.first().unwrap();
-                        if tok_table.contains_key(&fi.name) {
-                            code.push_str(&format!("self.next.name == \"{}\"", fi.name));
-                        } else if tok_table.contains_key(&fi.lexeme) {
-                            code.push_str(&format!("self.next.name == \"{}\"", &fi.lexeme));
-                        } else {
-                            let f = first[&fi.lexeme].clone();
-                            for i in f {
-                                code.push_str(&format!("self.next.name == \"{}\"||", i));
-                            }
-                            code.drain(code.len() - 2..code.len());
-                        }
-                        break;
-                    }
-                    local_i += 1;
-                }
-                if union_found {
-                    curr_index = local_i;
-                }
-                code.push('{');
-            } else if t.name == "br_close" {
-                code.push('}');
-            } else if t.name == "sq_open" {
-                code.push_str(&format!("while  (true) {{"));
-            } else if t.name == "sq_close" {
-                code.push('}');
-            } else if t.name == "p_open" {
-                code.push_str(&format!("while  (true) {{"));
-            } else if t.name == "p_close" {
-                code.push('}');
-            } else if t.name == "union" {
-                let prev = p.body.get(curr_index - 1).unwrap();
-                code.push_str(&format!(
-                    "match self.next.name {{
-                    {}
-                }}",
-                    prev.lexeme.clone()
-                ));
-            } else if t.name == "ident" {
-                if tok_table.contains_key(&t.lexeme) {
-                    code.push_str(&format!("self.m(\"{}\");", t.lexeme));
-                } else {
-                    code.push_str(&format!("self.{}(", t.lexeme));
-                    curr_index += 1;
-                    match p.body.get(curr_index) {
-                        Some(token) => {
-                            if token.name == "attr" {
-                                let mut s = token.lexeme.clone();
-                                s.remove(0);
-                                s.pop();
-                                code.push_str(&format!("{}", s));
-                            }
-                            code.push_str(");");
-                            curr_index += 1;
-                        }
-                        _ => (),
-                    }
-                    continue;
-                }
-            } else if t.name.contains("__") {
-                code.push_str(&format!("self.m(\"{}\");", t.name));
-            } else if t.name == "s_action" {
-                let mut s = t.lexeme.clone();
-                s.drain(0..2);
-                s.drain(s.len() - 2..s.len());
-                code.push_str(&format!("{}", s));
-            } else if t.name == "attr" {
-                let mut s = t.lexeme.clone();
-                s.pop();
-                s.remove(0);
-                code.push_str(&format!(",{}", s));
-            }
-            curr_index += 1;
-        }
-        // close method body
-        code.push_str("}\n");
+        let root = create_prod_tree(p, &tok_table);
+        let prod_code = codegen_preorder_traversal(&root, &first, &tok_table);
+        code.push_str(&format!(
+            "fn {}(&mut self {{ {} }}",
+            p.head.lexeme, prod_code
+        ));
     }
     // close impl block
     code.push_str("}\n");
-    fs::write(path, code).expect(&format!("Error writing file: {}.", path));
+    println!("\n\n{}", code);
+    // fs::write(path, code).expect(&format!("Error writing file: {}.", path));
 }
 
-///
-///
-fn create_prod_tree(prod: &Production) {
-    let mut output: Vec<cocor_scanner::Token> = Vec::new();
-    let mut op: Vec<cocor_scanner::Token> = Vec::new();
-    let mut p = HashMap::new();
-    p.insert("union", 3);
-    p.insert("br_close", 2);
-    p.insert("sq_close", 1);
-    p.insert("p_close", 0);
-    p.insert("br_open", 2);
-    p.insert("sq_open", 1);
-    p.insert("p_open", 0);
+/// Kinds of nodes that make up the parse tree of a production.
+#[derive(Debug)]
+enum PKind {
+    Nt,
+    T,
+    While,
+    Or,
+    Action,
+    Concat,
+    BlockEnd,
+    Eq,
+}
 
-    for t in &prod.body {
-        print!("processing token {}", t.name);
-        if t.name == "ident" || t.name.contains("__") {
-            print!(", pushing to output 1 {}", t.name);
-            output.push(t.clone());
-        } else if t.name == "br_close" {
-            // pop operators from op_stack until matching { is found
-            while op.len() > 0 && op.last().unwrap().name != "br_open" {
-                print!(", popping op 1: {}", op.last().unwrap().name);
-                output.push(op.pop().unwrap().clone());
-            }
-            if op.len() > 0 {
-                print!(", removing {}", op.last().unwrap().name);
-                op.pop().unwrap();
-            }
-            // if there is a greater precedence token, pop to output
-            while op.len() > 0
-                && op.last().unwrap().name != "br_open"
-                && p[op.last().unwrap().name.as_str()] >= p[t.name.as_str()]
-            {
-                print!(", pushing to output 3 {}", op.last().unwrap().name);
-                output.push(op.pop().unwrap().clone());
-            }
-            print!(", pushing op: {}", t.name);
-            op.push(t.clone());
-        } else if t.name.contains("open") {
-            // if there is a greater precedence token, pop to output
-            while op.len() > 0
-                && op.last().unwrap().name != "br_open"
-                && p[op.last().unwrap().name.as_str()] >= p[t.name.as_str()]
-            {
-                print!(", pushing to output 4 {}", op.last().unwrap().name);
-                output.push(op.pop().unwrap().clone());
-            }
-            print!(", pushing to output and op_stack {}", t.name);
-            output.push(t.clone());
-            op.push(t.clone());
-        } else if t.name == "union" {
-            // if there is a greater precedence token, pop to output
-            while op.len() > 0 && p[op.last().unwrap().name.as_str()] >= p[t.name.as_str()] {
-                print!(", pushing to output 4 {}", op.last().unwrap().name);
-                output.push(op.pop().unwrap().clone());
-            }
-            op.push(t.clone());
+/// Representation of a node in a production parse tree.
+#[derive(Debug)]
+struct PNode {
+    k: PKind,
+    t: cocor_scanner::Token,
+    c: Vec<PNode>,
+}
+
+impl PNode {
+    fn new(k: PKind, c: Vec<PNode>) -> PNode {
+        let t = cocor_scanner::Token::new(format!(""), format!(""));
+        PNode { k, t, c }
+    }
+
+    fn new_with_token(k: PKind, t: cocor_scanner::Token, c: Vec<PNode>) -> PNode {
+        PNode { k, t, c }
+    }
+
+    fn new_end_block() -> PNode {
+        let t = cocor_scanner::Token::new(format!(""), format!(""));
+        PNode {
+            k: PKind::BlockEnd,
+            t,
+            c: vec![],
         }
-        println!();
     }
-    while op.len() > 0 {
-        println!("final push to output {}", op.last().unwrap().name);
-        output.push(op.pop().unwrap());
+}
+
+/// Create a parse tree for the production body.
+fn create_prod_tree(prod: &Production, tok_table: &HashMap<String, String>) -> PNode {
+    let mut prec = HashMap::new();
+    prec.insert('(', 0);
+    prec.insert('|', 1);
+    prec.insert('.', 2);
+    prec.insert('*', 3);
+    let mut nodes: Vec<PNode> = Vec::new();
+    let mut op: Vec<char> = Vec::new();
+    let mut index = 0;
+    while index < prod.body.len() {
+        let curr = &prod.body[index];
+        // push concat op if necessary
+        if index > 0 {
+            let prev = &prod.body[index - 1];
+            if (prev.name == "ident"
+                || prev.name == "s_action"
+                || prev.name.contains("__")
+                || prev.name.contains("close"))
+                && (curr.name == "ident"
+                    || curr.name == "s_action"
+                    || curr.name.contains("__")
+                    || curr.name.contains("open"))
+            {
+                while op.len() > 0 && prec[op.last().unwrap()] >= prec[&'.'] {
+                    let top = op.pop().unwrap();
+                    if top == '.' {
+                        let c0 = nodes.pop().unwrap();
+                        let c1 = nodes.pop().unwrap();
+                        let c2 = PNode::new(PKind::Concat, vec![c0, c1]);
+                        nodes.push(c2);
+                    } else if top == '*' {
+                        let c0 = PNode::new(
+                            PKind::While,
+                            vec![PNode::new_end_block(), nodes.pop().unwrap()],
+                        );
+                        nodes.push(c0);
+                    } else if top == '|' {
+                        let c0 = PNode::new(
+                            PKind::Or,
+                            vec![
+                                PNode::new_end_block(),
+                                nodes.pop().unwrap(),
+                                nodes.pop().unwrap(),
+                            ],
+                        );
+                        nodes.push(c0);
+                    }
+                }
+                println!("pushing concat between {} and {}", prev.name, curr.name);
+                op.push('.');
+            }
+        }
+
+        if curr.name.contains("open") {
+            println!("pushing (");
+            op.push('(');
+        } else if curr.name == "br_close" {
+            while op.len() > 0 && *op.last().unwrap() != '(' {
+                let top = op.pop().unwrap();
+                if top == '.' {
+                    let c0 = nodes.pop().unwrap();
+                    let c1 = nodes.pop().unwrap();
+                    let c2 = PNode::new(PKind::Concat, vec![c0, c1]);
+                    nodes.push(c2);
+                } else if top == '*' {
+                    let c0 = PNode::new(
+                        PKind::While,
+                        vec![PNode::new_end_block(), nodes.pop().unwrap()],
+                    );
+                    nodes.push(c0);
+                } else if top == '|' {
+                    // TODO
+                }
+            }
+            op.pop().unwrap();
+            while op.len() > 0 && prec[op.last().unwrap()] >= prec[&'*'] {
+                let top = op.pop().unwrap();
+                if top == '.' {
+                    let c0 = nodes.pop().unwrap();
+                    let c1 = nodes.pop().unwrap();
+                    let c2 = PNode::new(PKind::Concat, vec![c0, c1]);
+                    nodes.push(c2);
+                } else if top == '*' {
+                    let c0 = PNode::new(
+                        PKind::While,
+                        vec![PNode::new_end_block(), nodes.pop().unwrap()],
+                    );
+                    nodes.push(c0);
+                } else if top == '|' {
+                    // TODO
+                }
+            }
+            op.push('*');
+        } else if tok_table.contains_key(&curr.lexeme) {
+            println!("pushing terminal {}", curr.lexeme);
+            nodes.push(PNode::new_with_token(PKind::T, curr.clone(), vec![]));
+        } else if tok_table.contains_key(&curr.name) {
+            println!("pushing terminal 2 {}", curr.name);
+            nodes.push(PNode::new_with_token(PKind::T, curr.clone(), vec![]));
+        } else if curr.name == "ident" {
+            println!("pushing nonterminal {}", curr.lexeme);
+            nodes.push(PNode::new_with_token(PKind::Nt, curr.clone(), vec![]));
+        } else if curr.name == "s_action" || curr.name == "attr" {
+            println!("pushing s_action {}", curr.lexeme);
+            let mut trimmed = curr.lexeme.clone();
+            trimmed.remove(0);
+            trimmed.remove(0);
+            trimmed.pop();
+            trimmed.pop();
+            let new_token = cocor_scanner::Token::new(curr.name.clone(), trimmed);
+            nodes.push(PNode::new_with_token(PKind::Action, new_token, vec![]));
+        } else if curr.name == "eq" {
+            nodes.push(PNode::new_with_token(PKind::Eq, curr.clone(), vec![]));
+        }
+
+        index += 1;
     }
 
-    print!("{} => ", prod.head.lexeme);
-    for i in output {
-        print!("{:?} ", i.lexeme);
+    while op.len() > 0 {
+        let top = op.pop().unwrap();
+        if top == '.' {
+            let c0 = nodes.pop().unwrap();
+            let c1 = nodes.pop().unwrap();
+            let c2 = PNode::new(PKind::Concat, vec![c0, c1]);
+            nodes.push(c2);
+        } else if top == '*' {
+            // TODO calc cond
+            let c0 = PNode::new(
+                PKind::While,
+                vec![PNode::new_end_block(), nodes.pop().unwrap()],
+            );
+            nodes.push(c0);
+        } else if top == '|' {
+            // TODO
+        }
     }
-    println!();
+    nodes.pop().unwrap()
+}
+
+fn gen_while_code(
+    node: &PNode,
+    first_sets: &HashMap<String, Vec<String>>,
+    tok_table: &HashMap<String, String>,
+) -> String {
+    // get string of tokens
+    let tokens = cond_preorder_traversal(node);
+    // get first set
+    let f = first(tokens, first_sets, tok_table);
+    let mut cond: String = f
+        .iter()
+        .map(|t| format!("self.next.name == \"{}\" || ", t))
+        .collect();
+    cond.pop();
+    cond.pop();
+    cond.pop();
+    format!("while {} {{", cond)
+}
+
+fn gen_if_code(node: &PNode) -> String {
+    String::from(&format!(""))
+}
+
+fn gen_prod_code(
+    node: &PNode,
+    first: &HashMap<String, Vec<String>>,
+    tok_table: &HashMap<String, String>,
+) -> String {
+    match node.k {
+        PKind::While => gen_while_code(node, first, tok_table),
+        PKind::Nt => String::from(&format!("self.{}(&mut self);", node.t.lexeme)),
+        PKind::T => String::from(&format!("self.m(\"{}\");", node.t.name)),
+        PKind::Action => node.t.lexeme.clone(),
+        PKind::BlockEnd => format!("}}"),
+        PKind::Eq => format!(")"),
+        _ => String::new(),
+    }
+}
+
+/// Debug inorder traversal of tree.
+fn cond_preorder_traversal(root: &PNode) -> Vec<cocor_scanner::Token> {
+    let mut tokens: Vec<cocor_scanner::Token> = Vec::new();
+    let mut stack = vec![root];
+    while stack.len() > 0 {
+        let f = stack.pop().unwrap();
+        if f.c.len() == 0 {
+            match f.k {
+                PKind::T => tokens.push(f.t.clone()),
+                PKind::Nt => tokens.push(f.t.clone()),
+                _ => (),
+            }
+        }
+        for i in f.c.iter() {
+            stack.push(i);
+        }
+    }
+    tokens
+}
+
+/// Code generation inorder traversal of tree.
+fn codegen_preorder_traversal(
+    root: &PNode,
+    first: &HashMap<String, Vec<String>>,
+    tok_table: &HashMap<String, String>,
+) -> String {
+    let mut code = String::new();
+    let mut t = vec![root];
+    while t.len() > 0 {
+        let f = t.pop().unwrap();
+        let segment = gen_prod_code(f, first, tok_table);
+        code.push_str(&segment);
+        for i in f.c.iter() {
+            t.push(i);
+        }
+    }
+    code
+}
+
+/// First set of string of terminals and/or nonterminals.
+fn first(
+    s: Vec<cocor_scanner::Token>,
+    f: &HashMap<String, Vec<String>>,
+    tok_table: &HashMap<String, String>,
+) -> Vec<String> {
+    let mut t: Vec<String> = Vec::new();
+    for i in s {
+        if i.name.contains("__") {
+            t.push(i.name.clone());
+            break;
+        } else if tok_table.contains_key(&i.lexeme) {
+            t.push(i.lexeme.clone());
+            break;
+        }
+        t.extend(f[&i.lexeme].clone());
+        if !f[&i.lexeme].contains(&String::from("EPSILON")) {
+            break;
+        }
+    }
+    t
 }
 
 // *********************************************** Main ***********************************************
@@ -1731,7 +1837,7 @@ fn main() {
     // let bnf = ebnf_to_bnf(&productions);
 
     // first sets calculation
-    let first = calc_first_sets(&productions, &tok_table);
+    let first_sets = calc_first_sets(&productions, &tok_table);
 
     // println!("*************** COCOL/R Scanner Generator ****************");
     // println!("* Reserved characters:");
@@ -1803,15 +1909,10 @@ fn main() {
     println!();
 
     println!("\n\nFirst Sets");
-    for (key, value) in &first {
+    for (key, value) in &first_sets {
         println!("{:?} => {:?}", key, value);
     }
     println!("\n");
-
-    // TODO remvoe
-    // for p in &productions {
-    //     create_prod_tree(p);
-    // }
 
     // code generation
     // let scanner_path = "./src/scanner.rs";
@@ -1825,7 +1926,7 @@ fn main() {
     // );
     // println!("Scanner ({}) written correctly.", scanner_path);
     let parser_path = "./src/parser.rs";
-    generate_parser(parser_path, &productions, &tok_table, &first);
+    generate_parser(parser_path, &productions, &tok_table, &first_sets);
     println!("Parser ({}) written correctly.", parser_path);
 
     // let mut scanner = Scanner::new(&args[2]);

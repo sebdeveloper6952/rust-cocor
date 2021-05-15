@@ -11,7 +11,7 @@ PRODUCTIONS
 IdentList =
     ident         (. let mut n = 1; .)
     {"," ident    (. n += 1; .)
-    }             (. println!("Hay {} elementos en la lista.", n) .)
+    }             (. println!("Hay {} elementos en la lista.", n); .)
     .
 
 END List
