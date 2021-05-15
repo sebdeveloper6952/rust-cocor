@@ -1490,12 +1490,9 @@ impl Parser {{
 
     // for each production
     for p in prods {
-        let root = create_prod_tree(p, &tok_table);
+        let root = create_prod_tree(p, &tok_table, &first);
         let prod_code = codegen_preorder_traversal(&root, &first, &tok_table);
-        code.push_str(&format!(
-            "fn {}(&mut self {{ {} }}",
-            p.head.lexeme, prod_code
-        ));
+        code.push_str(&format!("fn {}(&mut self{}}}", p.head.lexeme, prod_code));
     }
     // close impl block
     code.push_str("}\n");
@@ -1511,8 +1508,10 @@ enum PKind {
     While,
     Or,
     Action,
+    Attr,
     Concat,
     BlockEnd,
+    OrEnd,
     Eq,
 }
 
@@ -1522,16 +1521,30 @@ struct PNode {
     k: PKind,
     t: cocor_scanner::Token,
     c: Vec<PNode>,
+    o: bool,
+    first: Vec<String>,
 }
 
 impl PNode {
     fn new(k: PKind, c: Vec<PNode>) -> PNode {
         let t = cocor_scanner::Token::new(format!(""), format!(""));
-        PNode { k, t, c }
+        PNode {
+            k,
+            t,
+            c,
+            o: false,
+            first: vec![],
+        }
     }
 
-    fn new_with_token(k: PKind, t: cocor_scanner::Token, c: Vec<PNode>) -> PNode {
-        PNode { k, t, c }
+    fn new_with_token(
+        k: PKind,
+        t: cocor_scanner::Token,
+        c: Vec<PNode>,
+        o: bool,
+        first: Vec<String>,
+    ) -> PNode {
+        PNode { k, t, c, o, first }
     }
 
     fn new_end_block() -> PNode {
@@ -1540,12 +1553,33 @@ impl PNode {
             k: PKind::BlockEnd,
             t,
             c: vec![],
+            o: false,
+            first: vec![],
         }
+    }
+
+    fn new_or_block() -> PNode {
+        let t = cocor_scanner::Token::new(format!("OR"), format!("OR"));
+        PNode {
+            k: PKind::OrEnd,
+            t,
+            c: vec![],
+            o: false,
+            first: vec![],
+        }
+    }
+
+    fn set_o(&mut self, o: bool) {
+        self.o = o;
     }
 }
 
 /// Create a parse tree for the production body.
-fn create_prod_tree(prod: &Production, tok_table: &HashMap<String, String>) -> PNode {
+fn create_prod_tree(
+    prod: &Production,
+    tok_table: &HashMap<String, String>,
+    first: &HashMap<String, Vec<String>>,
+) -> PNode {
     let mut prec = HashMap::new();
     prec.insert('(', 0);
     prec.insert('|', 1);
@@ -1561,10 +1595,14 @@ fn create_prod_tree(prod: &Production, tok_table: &HashMap<String, String>) -> P
             let prev = &prod.body[index - 1];
             if (prev.name == "ident"
                 || prev.name == "s_action"
+                || prev.name == "attr"
+                || prev.name == "eq"
                 || prev.name.contains("__")
                 || prev.name.contains("close"))
                 && (curr.name == "ident"
                     || curr.name == "s_action"
+                    || curr.name == "attr"
+                    || curr.name == "eq"
                     || curr.name.contains("__")
                     || curr.name.contains("open"))
             {
@@ -1581,25 +1619,13 @@ fn create_prod_tree(prod: &Production, tok_table: &HashMap<String, String>) -> P
                             vec![PNode::new_end_block(), nodes.pop().unwrap()],
                         );
                         nodes.push(c0);
-                    } else if top == '|' {
-                        let c0 = PNode::new(
-                            PKind::Or,
-                            vec![
-                                PNode::new_end_block(),
-                                nodes.pop().unwrap(),
-                                nodes.pop().unwrap(),
-                            ],
-                        );
-                        nodes.push(c0);
                     }
                 }
-                println!("pushing concat between {} and {}", prev.name, curr.name);
                 op.push('.');
             }
         }
 
         if curr.name.contains("open") {
-            println!("pushing (");
             op.push('(');
         } else if curr.name == "br_close" {
             while op.len() > 0 && *op.last().unwrap() != '(' {
@@ -1616,9 +1642,15 @@ fn create_prod_tree(prod: &Production, tok_table: &HashMap<String, String>) -> P
                     );
                     nodes.push(c0);
                 } else if top == '|' {
-                    // TODO
+                    let mut c0 = nodes.pop().unwrap();
+                    let mut c1 = nodes.pop().unwrap();
+                    c0.set_o(true);
+                    c1.set_o(true);
+                    let c2 = PNode::new(PKind::Or, vec![PNode::new_or_block(), c0, c1]);
+                    nodes.push(c2);
                 }
             }
+            // pop the opening '('
             op.pop().unwrap();
             while op.len() > 0 && prec[op.last().unwrap()] >= prec[&'*'] {
                 let top = op.pop().unwrap();
@@ -1634,30 +1666,122 @@ fn create_prod_tree(prod: &Production, tok_table: &HashMap<String, String>) -> P
                     );
                     nodes.push(c0);
                 } else if top == '|' {
-                    // TODO
+                    let mut c0 = nodes.pop().unwrap();
+                    let mut c1 = nodes.pop().unwrap();
+                    c0.set_o(true);
+                    c1.set_o(true);
+                    let c2 = PNode::new(PKind::Or, vec![PNode::new_or_block(), c0, c1]);
+                    nodes.push(c2);
                 }
             }
             op.push('*');
+        } else if curr.name == "p_close" {
+            while op.len() > 0 && *op.last().unwrap() != '(' {
+                let top = op.pop().unwrap();
+                if top == '.' {
+                    let c0 = nodes.pop().unwrap();
+                    let c1 = nodes.pop().unwrap();
+                    let c2 = PNode::new(PKind::Concat, vec![c0, c1]);
+                    nodes.push(c2);
+                } else if top == '*' {
+                    let c0 = PNode::new(
+                        PKind::While,
+                        vec![PNode::new_end_block(), nodes.pop().unwrap()],
+                    );
+                    nodes.push(c0);
+                } else if top == '|' {
+                    let mut c0 = nodes.pop().unwrap();
+                    let mut c1 = nodes.pop().unwrap();
+                    c0.set_o(true);
+                    c1.set_o(true);
+                    let c2 = PNode::new(PKind::Or, vec![PNode::new_or_block(), c0, c1]);
+                    nodes.push(c2);
+                }
+            }
+            // pop the opening '('
+            op.pop().unwrap();
+        } else if curr.name == "union" {
+            while op.len() > 0 && prec[op.last().unwrap()] >= prec[&'|'] {
+                let top = op.pop().unwrap();
+                if top == '.' {
+                    let c0 = nodes.pop().unwrap();
+                    let c1 = nodes.pop().unwrap();
+                    let c2 = PNode::new(PKind::Concat, vec![c0, c1]);
+                    nodes.push(c2);
+                } else if top == '*' {
+                    let c0 = PNode::new(
+                        PKind::While,
+                        vec![PNode::new_end_block(), nodes.pop().unwrap()],
+                    );
+                    nodes.push(c0);
+                } else if top == '|' {
+                    let mut c0 = nodes.pop().unwrap();
+                    let mut c1 = nodes.pop().unwrap();
+                    c0.set_o(true);
+                    c1.set_o(true);
+                    let c2 = PNode::new(PKind::Or, vec![PNode::new_or_block(), c0, c1]);
+                    nodes.push(c2);
+                }
+            }
+            op.push('|');
         } else if tok_table.contains_key(&curr.lexeme) {
-            println!("pushing terminal {}", curr.lexeme);
-            nodes.push(PNode::new_with_token(PKind::T, curr.clone(), vec![]));
+            nodes.push(PNode::new_with_token(
+                PKind::T,
+                curr.clone(),
+                vec![],
+                false,
+                vec![curr.lexeme.clone()],
+            ));
         } else if tok_table.contains_key(&curr.name) {
-            println!("pushing terminal 2 {}", curr.name);
-            nodes.push(PNode::new_with_token(PKind::T, curr.clone(), vec![]));
+            nodes.push(PNode::new_with_token(
+                PKind::T,
+                curr.clone(),
+                vec![],
+                false,
+                vec![curr.name.clone()],
+            ));
         } else if curr.name == "ident" {
-            println!("pushing nonterminal {}", curr.lexeme);
-            nodes.push(PNode::new_with_token(PKind::Nt, curr.clone(), vec![]));
-        } else if curr.name == "s_action" || curr.name == "attr" {
-            println!("pushing s_action {}", curr.lexeme);
+            nodes.push(PNode::new_with_token(
+                PKind::Nt,
+                curr.clone(),
+                vec![],
+                false,
+                first[&curr.lexeme].clone(),
+            ));
+        } else if curr.name == "s_action" {
             let mut trimmed = curr.lexeme.clone();
             trimmed.remove(0);
             trimmed.remove(0);
             trimmed.pop();
             trimmed.pop();
             let new_token = cocor_scanner::Token::new(curr.name.clone(), trimmed);
-            nodes.push(PNode::new_with_token(PKind::Action, new_token, vec![]));
+            nodes.push(PNode::new_with_token(
+                PKind::Action,
+                new_token,
+                vec![],
+                false,
+                vec![],
+            ))
+        } else if curr.name == "attr" {
+            let mut trimmed = curr.lexeme.clone();
+            trimmed.remove(0);
+            trimmed.pop();
+            let new_token = cocor_scanner::Token::new(curr.name.clone(), trimmed);
+            nodes.push(PNode::new_with_token(
+                PKind::Attr,
+                new_token,
+                vec![],
+                false,
+                vec![],
+            ))
         } else if curr.name == "eq" {
-            nodes.push(PNode::new_with_token(PKind::Eq, curr.clone(), vec![]));
+            nodes.push(PNode::new_with_token(
+                PKind::Eq,
+                curr.clone(),
+                vec![],
+                false,
+                vec![],
+            ));
         }
 
         index += 1;
@@ -1671,14 +1795,18 @@ fn create_prod_tree(prod: &Production, tok_table: &HashMap<String, String>) -> P
             let c2 = PNode::new(PKind::Concat, vec![c0, c1]);
             nodes.push(c2);
         } else if top == '*' {
-            // TODO calc cond
             let c0 = PNode::new(
                 PKind::While,
                 vec![PNode::new_end_block(), nodes.pop().unwrap()],
             );
             nodes.push(c0);
         } else if top == '|' {
-            // TODO
+            let mut c0 = nodes.pop().unwrap();
+            let mut c1 = nodes.pop().unwrap();
+            c0.set_o(true);
+            c1.set_o(true);
+            let c2 = PNode::new(PKind::Or, vec![PNode::new_or_block(), c0, c1]);
+            nodes.push(c2);
         }
     }
     nodes.pop().unwrap()
@@ -1689,11 +1817,35 @@ fn gen_while_code(
     first_sets: &HashMap<String, Vec<String>>,
     tok_table: &HashMap<String, String>,
 ) -> String {
-    // get string of tokens
+    // get leaves of this while node
     let tokens = cond_preorder_traversal(node);
-    // get first set
-    let f = first(tokens, first_sets, tok_table);
-    let mut cond: String = f
+    let mut first: Vec<String> = Vec::new();
+    // process all tokens returned from thre traversal
+    for t in &tokens {
+        // is token terminal
+        if !t.o && first.len() > 0 {
+            break;
+        }
+        if tok_table.contains_key(&t.t.lexeme) {
+            first.push(t.t.lexeme.clone());
+            if !t.o {
+                break;
+            }
+        } else if t.t.name.contains("__") {
+            first.push(t.t.name.clone());
+            if !t.o {
+                break;
+            }
+        } else if t.t.name == "ident" {
+            let fs = first_sets[&t.t.lexeme].clone();
+            first.extend(fs);
+            if !t.o {
+                break;
+            }
+        }
+    }
+    println!("calculated first of while cond: {:?}", first);
+    let mut cond: String = first
         .iter()
         .map(|t| format!("self.next.name == \"{}\" || ", t))
         .collect();
@@ -1703,8 +1855,19 @@ fn gen_while_code(
     format!("while {} {{", cond)
 }
 
-fn gen_if_code(node: &PNode) -> String {
-    String::from(&format!(""))
+fn gen_or_code(
+    node: &PNode,
+    f: &HashMap<String, Vec<String>>,
+    t: &HashMap<String, String>,
+) -> String {
+    // get string of tokens
+    // let tokens = cond_preorder_traversal(node);
+    // for t in &tokens {
+    //     print!("t {} ", t.lexeme);
+    // }
+    // // get first set
+    // let f = first(tokens, f, t);
+    format!("match self.next.name {{")
 }
 
 fn gen_prod_code(
@@ -1714,30 +1877,46 @@ fn gen_prod_code(
 ) -> String {
     match node.k {
         PKind::While => gen_while_code(node, first, tok_table),
+        PKind::Or => gen_or_code(node, first, tok_table),
         PKind::Nt => String::from(&format!("self.{}(&mut self);", node.t.lexeme)),
         PKind::T => String::from(&format!("self.m(\"{}\");", node.t.name)),
         PKind::Action => node.t.lexeme.clone(),
+        PKind::Attr => format!(",{}", node.t.lexeme.clone()),
         PKind::BlockEnd => format!("}}"),
-        PKind::Eq => format!(")"),
+        PKind::Eq => format!(") {{"),
         _ => String::new(),
     }
 }
 
-/// Debug inorder traversal of tree.
-fn cond_preorder_traversal(root: &PNode) -> Vec<cocor_scanner::Token> {
-    let mut tokens: Vec<cocor_scanner::Token> = Vec::new();
+/// Preorder traversal of a WHILE node, computes the conditional
+/// part of the while statement.
+fn cond_preorder_traversal(root: &PNode) -> Vec<PNode> {
+    let mut tokens: Vec<PNode> = Vec::new();
     let mut stack = vec![root];
     while stack.len() > 0 {
         let f = stack.pop().unwrap();
         if f.c.len() == 0 {
             match f.k {
-                PKind::T => tokens.push(f.t.clone()),
-                PKind::Nt => tokens.push(f.t.clone()),
+                PKind::T => tokens.push(PNode::new_with_token(
+                    PKind::T,
+                    f.t.clone(),
+                    vec![],
+                    f.o,
+                    f.first.clone(),
+                )),
+                PKind::Nt => tokens.push(PNode::new_with_token(
+                    PKind::Nt,
+                    f.t.clone(),
+                    vec![],
+                    f.o,
+                    f.first.clone(),
+                )),
                 _ => (),
             }
-        }
-        for i in f.c.iter() {
-            stack.push(i);
+        } else {
+            for i in f.c.iter() {
+                stack.push(i);
+            }
         }
     }
     tokens
