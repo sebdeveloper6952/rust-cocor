@@ -9,8 +9,8 @@ ident = letter { letter | digit }.
 
 PRODUCTIONS
 IdentList =
-    ident            (. let mut n = 1; .)
-    {("," | ".") ident       (. n += 1; .)
+    ident            (. let mut n = 1; println!("Ident found: {}", self.curr.lexeme); .)
+    {"," ident       (. n += 1; println!("Ident found: {}", self.curr.lexeme); .)
     }                (. println!("Hay {} elementos en la lista.", n); .)
     .
 

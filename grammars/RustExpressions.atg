@@ -26,30 +26,30 @@ Stat = 							    (.let mut value: f32 = 0.0;.)
 	Expression<&mut value>          (.println!("Resultado: {}",value);.)
 	.
 
-Expression<result: &mut f32> =      (.let mut result1:f32=0.0;let mut result2:f32=0.0;let r: *mut f32=&mut *result;.)
+Expression<result: &mut f32> =      (.let mut result1:f32=0.0;let mut result2:f32=0.0;.)
 	Term<&mut result1>
 	{    "+"Term<&mut result2>		(.result1+=result2;.)
 	   | "-"Term<&mut result2>		(.result1-=result2;.)
-	}								(.unsafe{*result=result1};.)
+	}								(.*result=result1;.)
 	.
 
-Term<result: &mut f32>=			    (.let mut result1: &mut f32 = &mut 0.0; let mut result2: &mut f32 = &mut 0.0; let r: &mut f32 = &mut *result; .)
+Term<result: &mut f32>=			    (.let mut result1: &mut f32 = &mut 0.0; let mut result2: &mut f32 = &mut 0.0;.)
 	Factor<&mut result1>
-	{    "*"Factor<&mut result2>	(.result1*=result2;.)
-	   | "/"Factor<&mut result2>	(.result1/=result2;.)
-	}							    (.unsafe{*result=result1};.)
+	{    "*"Factor<&mut result2>	(.*result1*=*result2;.)
+	   | "/"Factor<&mut result2>	(.*result1/=*result2;.)
+	}							    (.*result=*result1;.)
 	.
 
 Factor<result: &mut f32> =		    (.let mut sign: f32 = 1.0;.)
 	["-"						    (.sign = -1.0;.)
 	]
-	(Number<&mut result>
-	 |"("Expression<&mut result>")"
-	)                               (.result*=sign;.)
+	(Number<result>
+	 |"("Expression<result>")"
+	)                               (.*result*=sign;.)
 	.
 
-Number<result: &mut f32> =	
+Number<result: &mut f32> =
 	(number				
-	|decnumber)                     (.result = self.next.lexeme.parse::<f32>().unwrap();.)
+	|decnumber)                     (.*result = self.curr.lexeme.parse::<f32>().unwrap();.)
 	.
 END Double

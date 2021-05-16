@@ -1333,6 +1333,7 @@ fn calc_first_sets(
     first_sets
 }
 
+/// TODO
 fn parse_productions(
     path: &str,
     tok_table: &mut HashMap<String, String>,
@@ -1359,6 +1360,7 @@ fn parse_productions(
     prod_tokens.insert("eq");
     prod_tokens.insert("s_action");
     prod_tokens.insert("attr");
+    let mut counter = 0;
     loop {
         match coco_scanner.next_token() {
             Some(token) => {
@@ -1418,28 +1420,12 @@ fn parse_productions(
             }
             _ => break,
         }
+        counter += 1;
     }
     productions
 }
 
-/// Transform EBNF to BNF
-///
-// fn ebnf_to_bnf(prods: &Vec<Production>) -> Vec<Production> {
-//     let mut productions = Vec::new();
-//     let mut changed = false;
-
-//     loop {
-//         for prod in prods {
-//             for token in &prod.body {}
-//         }
-//         if !changed {
-//             break;
-//         }
-//     }
-
-//     productions
-// }
-
+/// TODO
 fn generate_parser(
     path: &str,
     prods: &Vec<Production>,
@@ -1471,7 +1457,7 @@ impl Parser {{
     }}
 
     fn m(&mut self, t: &str) {{
-        println!(\"next {{}} t {{}}\", self.next.lexeme, t);
+        // println!(\"M: next {{}} => read: {{}}\", self.next.name, t);
         if self.next.name == t {{
             self.curr = self.next.clone();
             match self.scanner.next_token() {{
@@ -1481,7 +1467,7 @@ impl Parser {{
                 _ => self.next = Token::empty(),
             }}
         }} else {{
-            println!(\"ERROR: next {{}} t {{}}\", self.next.lexeme, t);
+            println!(\"ERROR: next {{}} t {{}}\", self.next.name, t);
             panic!(\"input error!\");
         }}
     }}\n",
@@ -1489,21 +1475,48 @@ impl Parser {{
     ));
 
     // for each production
-    for p in prods {
-        let root = create_prod_tree(p, &tok_table, &first);
-        let prod_code = codegen_preorder_traversal(&root, &first, &tok_table);
-        code.push_str(&format!("fn {}(&mut self{}}}", p.head.lexeme, prod_code));
+    for (i, e) in prods.iter().enumerate() {
+        let mut head: Vec<cocor_scanner::Token> = Vec::new();
+        let mut body: Vec<cocor_scanner::Token> = Vec::new();
+        let mut eq_found = false;
+        for t in &e.body {
+            if eq_found {
+                body.push(t.clone());
+            } else {
+                head.push(t.clone());
+            }
+            if t.name == "eq" {
+                eq_found = true;
+            }
+        }
+
+        code.push_str(&format!("fn {}(&mut self", e.head.lexeme));
+        for t in head {
+            if t.name == "attr" {
+                let mut m = t.lexeme.clone();
+                m.remove(0);
+                m.pop();
+                code.push_str(&format!(",{}", m));
+            } else if t.name == "eq" {
+                code.push_str(&format!("){{"));
+            }
+        }
+
+        let root = create_prod_tree(&body, &tok_table, &first);
+        let prod_code = codegen_preorder_traversal(&root);
+        code.push_str(&format!("{}}}", prod_code));
     }
     // close impl block
     code.push_str("}\n");
     println!("\n\n{}", code);
-    // fs::write(path, code).expect(&format!("Error writing file: {}.", path));
+    fs::write(path, code).expect(&format!("Error writing file: {}.", path));
 }
 
 /// Kinds of nodes that make up the parse tree of a production.
 #[derive(Debug)]
 enum PKind {
     Nt,
+    Nt2,
     T,
     While,
     Or,
@@ -1513,6 +1526,7 @@ enum PKind {
     BlockEnd,
     OrEnd,
     Eq,
+    PEnd,
 }
 
 /// Representation of a node in a production parse tree.
@@ -1523,17 +1537,19 @@ struct PNode {
     c: Vec<PNode>,
     o: bool,
     first: Vec<String>,
+    visited: bool,
 }
 
 impl PNode {
-    fn new(k: PKind, c: Vec<PNode>) -> PNode {
+    fn new(k: PKind, c: Vec<PNode>, first: Vec<String>) -> PNode {
         let t = cocor_scanner::Token::new(format!(""), format!(""));
         PNode {
             k,
             t,
             c,
             o: false,
-            first: vec![],
+            first,
+            visited: false,
         }
     }
 
@@ -1544,7 +1560,14 @@ impl PNode {
         o: bool,
         first: Vec<String>,
     ) -> PNode {
-        PNode { k, t, c, o, first }
+        PNode {
+            k,
+            t,
+            c,
+            o,
+            first,
+            visited: false,
+        }
     }
 
     fn new_end_block() -> PNode {
@@ -1555,6 +1578,19 @@ impl PNode {
             c: vec![],
             o: false,
             first: vec![],
+            visited: false,
+        }
+    }
+
+    fn new_end_method() -> PNode {
+        let t = cocor_scanner::Token::new(format!(")"), format!(")"));
+        PNode {
+            k: PKind::PEnd,
+            t,
+            c: vec![],
+            o: false,
+            first: vec![],
+            visited: false,
         }
     }
 
@@ -1566,6 +1602,7 @@ impl PNode {
             c: vec![],
             o: false,
             first: vec![],
+            visited: false,
         }
     }
 
@@ -1576,23 +1613,25 @@ impl PNode {
 
 /// Create a parse tree for the production body.
 fn create_prod_tree(
-    prod: &Production,
+    // prod: &Production,
+    body: &Vec<cocor_scanner::Token>,
     tok_table: &HashMap<String, String>,
     first: &HashMap<String, Vec<String>>,
 ) -> PNode {
     let mut prec = HashMap::new();
     prec.insert('(', 0);
-    prec.insert('|', 1);
-    prec.insert('.', 2);
-    prec.insert('*', 3);
+    prec.insert('|', 2);
+    prec.insert('.', 3);
+    prec.insert('*', 4);
+    prec.insert('~', 4);
     let mut nodes: Vec<PNode> = Vec::new();
     let mut op: Vec<char> = Vec::new();
     let mut index = 0;
-    while index < prod.body.len() {
-        let curr = &prod.body[index];
+    while index < body.len() {
+        let curr = &body[index];
         // push concat op if necessary
         if index > 0 {
-            let prev = &prod.body[index - 1];
+            let prev = &body[index - 1];
             if (prev.name == "ident"
                 || prev.name == "s_action"
                 || prev.name == "attr"
@@ -1609,16 +1648,29 @@ fn create_prod_tree(
                 while op.len() > 0 && prec[op.last().unwrap()] >= prec[&'.'] {
                     let top = op.pop().unwrap();
                     if top == '.' {
-                        let c0 = nodes.pop().unwrap();
                         let c1 = nodes.pop().unwrap();
-                        let c2 = PNode::new(PKind::Concat, vec![c0, c1]);
+                        let c0 = nodes.pop().unwrap();
+                        let mut fs = c0.first.clone();
+                        if fs.len() == 0 {
+                            fs.extend(c1.first.clone());
+                        }
+                        let c2 = PNode::new(PKind::Concat, vec![c1, c0], fs);
                         nodes.push(c2);
                     } else if top == '*' {
-                        let c0 = PNode::new(
-                            PKind::While,
-                            vec![PNode::new_end_block(), nodes.pop().unwrap()],
+                        let c0 = nodes.pop().unwrap();
+                        let fs = c0.first.clone();
+                        let c1 = PNode::new(PKind::While, vec![PNode::new_end_block(), c0], fs);
+                        nodes.push(c1);
+                    } else if top == '~' {
+                        let mut c0 = nodes.pop().unwrap();
+                        c0.set_o(true);
+                        let fs = c0.first.clone();
+                        let c1 = PNode::new(
+                            PKind::Or,
+                            vec![PNode::new_or_block(), PNode::new_end_block(), c0],
+                            fs,
                         );
-                        nodes.push(c0);
+                        nodes.push(c1);
                     }
                 }
                 op.push('.');
@@ -1631,23 +1683,48 @@ fn create_prod_tree(
             while op.len() > 0 && *op.last().unwrap() != '(' {
                 let top = op.pop().unwrap();
                 if top == '.' {
-                    let c0 = nodes.pop().unwrap();
                     let c1 = nodes.pop().unwrap();
-                    let c2 = PNode::new(PKind::Concat, vec![c0, c1]);
+                    let c0 = nodes.pop().unwrap();
+                    let mut fs = c0.first.clone();
+                    if fs.len() == 0 {
+                        fs.extend(c1.first.clone());
+                    }
+                    let c2 = PNode::new(PKind::Concat, vec![c1, c0], fs);
                     nodes.push(c2);
                 } else if top == '*' {
-                    let c0 = PNode::new(
-                        PKind::While,
-                        vec![PNode::new_end_block(), nodes.pop().unwrap()],
-                    );
-                    nodes.push(c0);
+                    let c0 = nodes.pop().unwrap();
+                    let fs = c0.first.clone();
+                    let c1 = PNode::new(PKind::While, vec![PNode::new_end_block(), c0], fs);
+                    nodes.push(c1);
                 } else if top == '|' {
-                    let mut c0 = nodes.pop().unwrap();
                     let mut c1 = nodes.pop().unwrap();
+                    let mut c0 = nodes.pop().unwrap();
                     c0.set_o(true);
                     c1.set_o(true);
-                    let c2 = PNode::new(PKind::Or, vec![PNode::new_or_block(), c0, c1]);
+                    let mut fs = c0.first.clone();
+                    fs.extend(c1.first.clone());
+                    let c2 = PNode::new(
+                        PKind::Or,
+                        vec![
+                            PNode::new_or_block(),
+                            PNode::new_end_block(),
+                            c1,
+                            PNode::new_end_block(),
+                            c0,
+                        ],
+                        fs,
+                    );
                     nodes.push(c2);
+                } else if top == '~' {
+                    let mut c0 = nodes.pop().unwrap();
+                    c0.set_o(true);
+                    let fs = c0.first.clone();
+                    let c1 = PNode::new(
+                        PKind::Or,
+                        vec![PNode::new_or_block(), PNode::new_end_block(), c0],
+                        fs,
+                    );
+                    nodes.push(c1);
                 }
             }
             // pop the opening '('
@@ -1655,23 +1732,48 @@ fn create_prod_tree(
             while op.len() > 0 && prec[op.last().unwrap()] >= prec[&'*'] {
                 let top = op.pop().unwrap();
                 if top == '.' {
-                    let c0 = nodes.pop().unwrap();
                     let c1 = nodes.pop().unwrap();
-                    let c2 = PNode::new(PKind::Concat, vec![c0, c1]);
+                    let c0 = nodes.pop().unwrap();
+                    let mut fs = c0.first.clone();
+                    if fs.len() == 0 {
+                        fs.extend(c1.first.clone());
+                    }
+                    let c2 = PNode::new(PKind::Concat, vec![c1, c0], fs);
                     nodes.push(c2);
                 } else if top == '*' {
-                    let c0 = PNode::new(
-                        PKind::While,
-                        vec![PNode::new_end_block(), nodes.pop().unwrap()],
-                    );
-                    nodes.push(c0);
+                    let c0 = nodes.pop().unwrap();
+                    let fs = c0.first.clone();
+                    let c1 = PNode::new(PKind::While, vec![PNode::new_end_block(), c0], fs);
+                    nodes.push(c1);
                 } else if top == '|' {
-                    let mut c0 = nodes.pop().unwrap();
                     let mut c1 = nodes.pop().unwrap();
+                    let mut c0 = nodes.pop().unwrap();
                     c0.set_o(true);
                     c1.set_o(true);
-                    let c2 = PNode::new(PKind::Or, vec![PNode::new_or_block(), c0, c1]);
+                    let mut fs = c0.first.clone();
+                    fs.extend(c1.first.clone());
+                    let c2 = PNode::new(
+                        PKind::Or,
+                        vec![
+                            PNode::new_or_block(),
+                            PNode::new_end_block(),
+                            c1,
+                            PNode::new_end_block(),
+                            c0,
+                        ],
+                        fs,
+                    );
                     nodes.push(c2);
+                } else if top == '~' {
+                    let mut c0 = nodes.pop().unwrap();
+                    c0.set_o(true);
+                    let fs = c0.first.clone();
+                    let c1 = PNode::new(
+                        PKind::Or,
+                        vec![PNode::new_or_block(), PNode::new_end_block(), c0],
+                        fs,
+                    );
+                    nodes.push(c1);
                 }
             }
             op.push('*');
@@ -1679,23 +1781,48 @@ fn create_prod_tree(
             while op.len() > 0 && *op.last().unwrap() != '(' {
                 let top = op.pop().unwrap();
                 if top == '.' {
-                    let c0 = nodes.pop().unwrap();
                     let c1 = nodes.pop().unwrap();
-                    let c2 = PNode::new(PKind::Concat, vec![c0, c1]);
+                    let c0 = nodes.pop().unwrap();
+                    let mut fs = c0.first.clone();
+                    if fs.len() == 0 {
+                        fs.extend(c1.first.clone());
+                    }
+                    let c2 = PNode::new(PKind::Concat, vec![c1, c0], fs);
                     nodes.push(c2);
                 } else if top == '*' {
-                    let c0 = PNode::new(
-                        PKind::While,
-                        vec![PNode::new_end_block(), nodes.pop().unwrap()],
-                    );
-                    nodes.push(c0);
+                    let c0 = nodes.pop().unwrap();
+                    let fs = c0.first.clone();
+                    let c1 = PNode::new(PKind::While, vec![PNode::new_end_block(), c0], fs);
+                    nodes.push(c1);
                 } else if top == '|' {
-                    let mut c0 = nodes.pop().unwrap();
                     let mut c1 = nodes.pop().unwrap();
+                    let mut c0 = nodes.pop().unwrap();
                     c0.set_o(true);
                     c1.set_o(true);
-                    let c2 = PNode::new(PKind::Or, vec![PNode::new_or_block(), c0, c1]);
+                    let mut fs = c0.first.clone();
+                    fs.extend(c1.first.clone());
+                    let c2 = PNode::new(
+                        PKind::Or,
+                        vec![
+                            PNode::new_or_block(),
+                            PNode::new_end_block(),
+                            c1,
+                            PNode::new_end_block(),
+                            c0,
+                        ],
+                        fs,
+                    );
                     nodes.push(c2);
+                } else if top == '~' {
+                    let mut c0 = nodes.pop().unwrap();
+                    c0.set_o(true);
+                    let fs = c0.first.clone();
+                    let c1 = PNode::new(
+                        PKind::Or,
+                        vec![PNode::new_or_block(), PNode::new_end_block(), c0],
+                        fs,
+                    );
+                    nodes.push(c1);
                 }
             }
             // pop the opening '('
@@ -1704,26 +1831,149 @@ fn create_prod_tree(
             while op.len() > 0 && prec[op.last().unwrap()] >= prec[&'|'] {
                 let top = op.pop().unwrap();
                 if top == '.' {
-                    let c0 = nodes.pop().unwrap();
                     let c1 = nodes.pop().unwrap();
-                    let c2 = PNode::new(PKind::Concat, vec![c0, c1]);
+                    let c0 = nodes.pop().unwrap();
+                    let mut fs = c0.first.clone();
+                    if fs.len() == 0 {
+                        fs.extend(c1.first.clone());
+                    }
+                    let c2 = PNode::new(PKind::Concat, vec![c1, c0], fs);
                     nodes.push(c2);
                 } else if top == '*' {
-                    let c0 = PNode::new(
-                        PKind::While,
-                        vec![PNode::new_end_block(), nodes.pop().unwrap()],
-                    );
-                    nodes.push(c0);
+                    let c0 = nodes.pop().unwrap();
+                    let fs = c0.first.clone();
+                    let c1 = PNode::new(PKind::While, vec![PNode::new_end_block(), c0], fs);
+                    nodes.push(c1);
                 } else if top == '|' {
-                    let mut c0 = nodes.pop().unwrap();
                     let mut c1 = nodes.pop().unwrap();
+                    let mut c0 = nodes.pop().unwrap();
                     c0.set_o(true);
                     c1.set_o(true);
-                    let c2 = PNode::new(PKind::Or, vec![PNode::new_or_block(), c0, c1]);
+                    let mut fs = c0.first.clone();
+                    fs.extend(c1.first.clone());
+                    let c2 = PNode::new(
+                        PKind::Or,
+                        vec![
+                            PNode::new_or_block(),
+                            PNode::new_end_block(),
+                            c1,
+                            PNode::new_end_block(),
+                            c0,
+                        ],
+                        fs,
+                    );
                     nodes.push(c2);
+                } else if top == '~' {
+                    let mut c0 = nodes.pop().unwrap();
+                    c0.set_o(true);
+                    let fs = c0.first.clone();
+                    let c1 = PNode::new(
+                        PKind::Or,
+                        vec![PNode::new_or_block(), PNode::new_end_block(), c0],
+                        fs,
+                    );
+                    nodes.push(c1);
                 }
             }
             op.push('|');
+        } else if curr.name == "sq_close" {
+            while op.len() > 0 && *op.last().unwrap() != '(' {
+                let top = op.pop().unwrap();
+                if top == '.' {
+                    let c1 = nodes.pop().unwrap();
+                    let c0 = nodes.pop().unwrap();
+                    let mut fs = c0.first.clone();
+                    if fs.len() == 0 {
+                        fs.extend(c1.first.clone());
+                    }
+                    let c2 = PNode::new(PKind::Concat, vec![c1, c0], fs);
+                    nodes.push(c2);
+                } else if top == '*' {
+                    let c0 = nodes.pop().unwrap();
+                    let fs = c0.first.clone();
+                    let c1 = PNode::new(PKind::While, vec![PNode::new_end_block(), c0], fs);
+                    nodes.push(c1);
+                } else if top == '|' {
+                    let mut c1 = nodes.pop().unwrap();
+                    let mut c0 = nodes.pop().unwrap();
+                    c0.set_o(true);
+                    c1.set_o(true);
+                    let mut fs = c0.first.clone();
+                    fs.extend(c1.first.clone());
+                    let c2 = PNode::new(
+                        PKind::Or,
+                        vec![
+                            PNode::new_or_block(),
+                            PNode::new_end_block(),
+                            c1,
+                            PNode::new_end_block(),
+                            c0,
+                        ],
+                        fs,
+                    );
+                    nodes.push(c2);
+                } else if top == '~' {
+                    let mut c0 = nodes.pop().unwrap();
+                    c0.set_o(true);
+                    let fs = c0.first.clone();
+                    let c1 = PNode::new(
+                        PKind::Or,
+                        vec![PNode::new_or_block(), PNode::new_end_block(), c0],
+                        fs,
+                    );
+                    nodes.push(c1);
+                }
+            }
+            // pop the opening '('
+            op.pop().unwrap();
+            while op.len() > 0 && prec[op.last().unwrap()] >= prec[&'~'] {
+                let top = op.pop().unwrap();
+                if top == '.' {
+                    let c1 = nodes.pop().unwrap();
+                    let c0 = nodes.pop().unwrap();
+                    let mut fs = c0.first.clone();
+                    if fs.len() == 0 {
+                        fs.extend(c1.first.clone());
+                    }
+                    let c2 = PNode::new(PKind::Concat, vec![c1, c0], fs);
+                    nodes.push(c2);
+                } else if top == '*' {
+                    let c0 = nodes.pop().unwrap();
+                    let fs = c0.first.clone();
+                    let c1 = PNode::new(PKind::While, vec![PNode::new_end_block(), c0], fs);
+                    nodes.push(c1);
+                } else if top == '|' {
+                    let mut c1 = nodes.pop().unwrap();
+                    let mut c0 = nodes.pop().unwrap();
+                    c0.set_o(true);
+                    c1.set_o(true);
+                    let mut fs = c0.first.clone();
+                    fs.extend(c1.first.clone());
+                    let c2 = PNode::new(
+                        PKind::Or,
+                        vec![
+                            PNode::new_or_block(),
+                            PNode::new_end_block(),
+                            c1,
+                            PNode::new_end_block(),
+                            c0,
+                        ],
+                        fs,
+                    );
+                    nodes.push(c2);
+                } else if top == '~' {
+                    let mut c0 = nodes.pop().unwrap();
+                    c0.set_o(true);
+                    let fs = c0.first.clone();
+                    let c1 = PNode::new(
+                        PKind::Or,
+                        vec![PNode::new_or_block(), PNode::new_end_block(), c0],
+                        fs,
+                    );
+                    nodes.push(c1);
+                }
+            }
+            op.push('~');
         } else if tok_table.contains_key(&curr.lexeme) {
             nodes.push(PNode::new_with_token(
                 PKind::T,
@@ -1741,13 +1991,28 @@ fn create_prod_tree(
                 vec![curr.name.clone()],
             ));
         } else if curr.name == "ident" {
-            nodes.push(PNode::new_with_token(
-                PKind::Nt,
-                curr.clone(),
-                vec![],
-                false,
-                first[&curr.lexeme].clone(),
-            ));
+            match body.get(index + 1) {
+                Some(token) => {
+                    if token.name == "attr" {
+                        nodes.push(PNode::new_with_token(
+                            PKind::Nt,
+                            curr.clone(),
+                            vec![],
+                            false,
+                            first[&curr.lexeme].clone(),
+                        ));
+                    } else {
+                        nodes.push(PNode::new_with_token(
+                            PKind::Nt2,
+                            curr.clone(),
+                            vec![],
+                            false,
+                            first[&curr.lexeme].clone(),
+                        ));
+                    }
+                }
+                _ => (),
+            }
         } else if curr.name == "s_action" {
             let mut trimmed = curr.lexeme.clone();
             trimmed.remove(0);
@@ -1773,7 +2038,7 @@ fn create_prod_tree(
                 vec![],
                 false,
                 vec![],
-            ))
+            ));
         } else if curr.name == "eq" {
             nodes.push(PNode::new_with_token(
                 PKind::Eq,
@@ -1790,178 +2055,153 @@ fn create_prod_tree(
     while op.len() > 0 {
         let top = op.pop().unwrap();
         if top == '.' {
-            let c0 = nodes.pop().unwrap();
             let c1 = nodes.pop().unwrap();
-            let c2 = PNode::new(PKind::Concat, vec![c0, c1]);
+            let c0 = nodes.pop().unwrap();
+            let mut fs = c0.first.clone();
+            if fs.len() == 0 {
+                fs.extend(c1.first.clone());
+            }
+            let c2 = PNode::new(PKind::Concat, vec![c1, c0], fs);
             nodes.push(c2);
         } else if top == '*' {
-            let c0 = PNode::new(
-                PKind::While,
-                vec![PNode::new_end_block(), nodes.pop().unwrap()],
-            );
-            nodes.push(c0);
+            let c0 = nodes.pop().unwrap();
+            let fs = c0.first.clone();
+            let c1 = PNode::new(PKind::While, vec![PNode::new_end_block(), c0], fs);
+            nodes.push(c1);
         } else if top == '|' {
-            let mut c0 = nodes.pop().unwrap();
             let mut c1 = nodes.pop().unwrap();
+            let mut c0 = nodes.pop().unwrap();
             c0.set_o(true);
             c1.set_o(true);
-            let c2 = PNode::new(PKind::Or, vec![PNode::new_or_block(), c0, c1]);
+            let mut fs = c0.first.clone();
+            fs.extend(c1.first.clone());
+            let c2 = PNode::new(
+                PKind::Or,
+                vec![
+                    PNode::new_or_block(),
+                    PNode::new_end_block(),
+                    c1,
+                    PNode::new_end_block(),
+                    c0,
+                ],
+                fs,
+            );
             nodes.push(c2);
+        } else if top == '~' {
+            let mut c0 = nodes.pop().unwrap();
+            c0.set_o(true);
+            let fs = c0.first.clone();
+            let c1 = PNode::new(
+                PKind::Or,
+                vec![PNode::new_or_block(), PNode::new_end_block(), c0],
+                fs,
+            );
+            nodes.push(c1);
         }
     }
     nodes.pop().unwrap()
 }
 
-fn gen_while_code(
-    node: &PNode,
-    first_sets: &HashMap<String, Vec<String>>,
-    tok_table: &HashMap<String, String>,
-) -> String {
-    // get leaves of this while node
-    let tokens = cond_preorder_traversal(node);
-    let mut first: Vec<String> = Vec::new();
-    // process all tokens returned from thre traversal
-    for t in &tokens {
-        // is token terminal
-        if !t.o && first.len() > 0 {
-            break;
-        }
-        if tok_table.contains_key(&t.t.lexeme) {
-            first.push(t.t.lexeme.clone());
-            if !t.o {
-                break;
-            }
-        } else if t.t.name.contains("__") {
-            first.push(t.t.name.clone());
-            if !t.o {
-                break;
-            }
-        } else if t.t.name == "ident" {
-            let fs = first_sets[&t.t.lexeme].clone();
-            first.extend(fs);
-            if !t.o {
-                break;
-            }
-        }
-    }
-    println!("calculated first of while cond: {:?}", first);
-    let mut cond: String = first
+/// Generate code for WHILE node.
+fn gen_while_code(node: &PNode) -> String {
+    let mut cond: String = node
+        .first
         .iter()
         .map(|t| format!("self.next.name == \"{}\" || ", t))
         .collect();
-    cond.pop();
-    cond.pop();
-    cond.pop();
+    let cond: String = cond.drain(0..cond.len() - 3).collect();
     format!("while {} {{", cond)
 }
 
-fn gen_or_code(
-    node: &PNode,
-    f: &HashMap<String, Vec<String>>,
-    t: &HashMap<String, String>,
-) -> String {
-    // get string of tokens
-    // let tokens = cond_preorder_traversal(node);
-    // for t in &tokens {
-    //     print!("t {} ", t.lexeme);
-    // }
-    // // get first set
-    // let f = first(tokens, f, t);
-    format!("match self.next.name {{")
+/// Generate code for CONCAT node.
+fn gen_concat_code(node: &PNode) -> String {
+    let mut code = String::new();
+    if node.o {
+        for i in &node.first {
+            code.push_str(&format!("\"{}\"|", i));
+        }
+        code.pop();
+        code.push_str(&format!("=>{{"));
+    }
+
+    code
 }
 
-fn gen_prod_code(
-    node: &PNode,
-    first: &HashMap<String, Vec<String>>,
-    tok_table: &HashMap<String, String>,
-) -> String {
+/// TODO
+fn gen_t_code(node: &PNode) -> String {
+    let mut code = String::new();
+    if node.o {
+        if node.t.name.contains("__") {
+            code.push_str(&format!(
+                "\"{}\"=>{{ self.m(\"{}\");",
+                node.t.name, node.t.name
+            ));
+        } else {
+            code.push_str(&format!(
+                "\"{}\"=>{{ self.m(\"{}\");",
+                node.t.lexeme, node.t.lexeme
+            ));
+        }
+    } else {
+        if node.t.name.contains("__") {
+            code.push_str(&format!("self.m(\"{}\");", node.t.name));
+        } else {
+            code.push_str(&format!("self.m(\"{}\");", node.t.lexeme));
+        }
+    }
+    code
+}
+
+/// TODO
+fn gen_nt_code(node: &PNode) -> String {
+    let mut code = String::new();
+    if node.o {
+        code.push_str(&format!(
+            "\"{}\"=>{{ self.m(\"{}\");",
+            node.t.name, node.t.name
+        ));
+    } else {
+        code.push_str(&format!("self.{}(", node.t.lexeme));
+    }
     match node.k {
-        PKind::While => gen_while_code(node, first, tok_table),
-        PKind::Or => gen_or_code(node, first, tok_table),
-        PKind::Nt => String::from(&format!("self.{}(&mut self);", node.t.lexeme)),
-        PKind::T => String::from(&format!("self.m(\"{}\");", node.t.name)),
-        PKind::Action => node.t.lexeme.clone(),
-        PKind::Attr => format!(",{}", node.t.lexeme.clone()),
+        PKind::Nt2 => code.push_str(&format!(");")),
+        _ => (),
+    }
+    code
+}
+
+/// TODO
+fn gen_prod_code(node: &PNode) -> String {
+    match node.k {
+        PKind::While => gen_while_code(node),
         PKind::BlockEnd => format!("}}"),
-        PKind::Eq => format!(") {{"),
+        PKind::Or => String::from("match self.next.name.as_str() {"),
+        PKind::OrEnd => String::from("_=>(),}"),
+        PKind::Nt | PKind::Nt2 => gen_nt_code(node),
+        PKind::T => gen_t_code(node),
+        PKind::Action => node.t.lexeme.clone(),
+        PKind::Attr => format!("{});", node.t.lexeme.clone()),
+        PKind::PEnd => format!(")"),
+        PKind::Eq => format!("{{"),
+        PKind::Concat => gen_concat_code(node),
         _ => String::new(),
     }
 }
 
-/// Preorder traversal of a WHILE node, computes the conditional
-/// part of the while statement.
-fn cond_preorder_traversal(root: &PNode) -> Vec<PNode> {
-    let mut tokens: Vec<PNode> = Vec::new();
-    let mut stack = vec![root];
-    while stack.len() > 0 {
-        let f = stack.pop().unwrap();
-        if f.c.len() == 0 {
-            match f.k {
-                PKind::T => tokens.push(PNode::new_with_token(
-                    PKind::T,
-                    f.t.clone(),
-                    vec![],
-                    f.o,
-                    f.first.clone(),
-                )),
-                PKind::Nt => tokens.push(PNode::new_with_token(
-                    PKind::Nt,
-                    f.t.clone(),
-                    vec![],
-                    f.o,
-                    f.first.clone(),
-                )),
-                _ => (),
-            }
-        } else {
-            for i in f.c.iter() {
-                stack.push(i);
-            }
-        }
-    }
-    tokens
-}
-
 /// Code generation inorder traversal of tree.
-fn codegen_preorder_traversal(
-    root: &PNode,
-    first: &HashMap<String, Vec<String>>,
-    tok_table: &HashMap<String, String>,
-) -> String {
+fn codegen_preorder_traversal(root: &PNode) -> String {
     let mut code = String::new();
     let mut t = vec![root];
     while t.len() > 0 {
         let f = t.pop().unwrap();
-        let segment = gen_prod_code(f, first, tok_table);
+        println!("node: {:?} -> first: {:?}", f.k, f.first);
+        let segment = gen_prod_code(f);
         code.push_str(&segment);
         for i in f.c.iter() {
             t.push(i);
         }
     }
     code
-}
-
-/// First set of string of terminals and/or nonterminals.
-fn first(
-    s: Vec<cocor_scanner::Token>,
-    f: &HashMap<String, Vec<String>>,
-    tok_table: &HashMap<String, String>,
-) -> Vec<String> {
-    let mut t: Vec<String> = Vec::new();
-    for i in s {
-        if i.name.contains("__") {
-            t.push(i.name.clone());
-            break;
-        } else if tok_table.contains_key(&i.lexeme) {
-            t.push(i.lexeme.clone());
-            break;
-        }
-        t.extend(f[&i.lexeme].clone());
-        if !f[&i.lexeme].contains(&String::from("EPSILON")) {
-            break;
-        }
-    }
-    t
 }
 
 // *********************************************** Main ***********************************************
@@ -2094,28 +2334,20 @@ fn main() {
     println!("\n");
 
     // code generation
-    // let scanner_path = "./src/scanner.rs";
-    // generate_scanner(
-    //     scanner_path,
-    //     &direct_dfa,
-    //     &accepting_states,
-    //     &keywords,
-    //     &except_table,
-    //     &whitespace,
-    // );
-    // println!("Scanner ({}) written correctly.", scanner_path);
+    let scanner_path = "./src/scanner.rs";
+    generate_scanner(
+        scanner_path,
+        &direct_dfa,
+        &accepting_states,
+        &keywords,
+        &except_table,
+        &whitespace,
+    );
+    println!("Scanner ({}) written correctly.", scanner_path);
     let parser_path = "./src/parser.rs";
     generate_parser(parser_path, &productions, &tok_table, &first_sets);
     println!("Parser ({}) written correctly.", parser_path);
 
-    // let mut scanner = Scanner::new(&args[2]);
-    // loop {
-    //     match scanner.next_token() {
-    //         Some(token) => println!("{:?}", token),
-    //         None => break,
-    //     }
-    // }
-
-    // let mut parser = parser::Parser::new(&args[2]);
-    // parser.init();
+    let mut parser = parser::Parser::new(&args[2]);
+    parser.init();
 }
