@@ -1,27 +1,26 @@
 use crate::CocolToken;
 use std::collections::{HashMap, HashSet};
-use std::env;
 use std::fs;
 use std::process;
 use std::str::FromStr;
 /// The representation of the Epsilon character
-const EPSILON: char = '@';
+pub const EPSILON: char = '@';
 /// Character used instead of '('
-const PARENTHESES_OPEN: char = 15 as char;
+pub const PARENTHESES_OPEN: char = 15 as char;
 /// Character used instead of ')'
-const PARENTHESES_CLOSE: char = 16 as char;
+pub const PARENTHESES_CLOSE: char = 16 as char;
 /// The character used as an explicit concatenation operator
 /// in the regular expressions.
 // const CONCAT_CHAR: char = 17 as char;
-const KLEENE_CHAR: char = 18 as char;
-const POSITIVE_CHAR: char = 19 as char;
-const UNION_CHAR: char = 20 as char;
-const EXT_CHAR: char = 26 as char;
-const OPTIONAL_CHAR: char = 22 as char;
+pub const KLEENE_CHAR: char = 18 as char;
+pub const POSITIVE_CHAR: char = 19 as char;
+pub const UNION_CHAR: char = 20 as char;
+pub const EXT_CHAR: char = 26 as char;
+pub const OPTIONAL_CHAR: char = 22 as char;
 
 // const PARENTHESES_OPEN: char = '(';
 // const PARENTHESES_CLOSE: char = ')';
-const CONCAT_CHAR: char = '~';
+pub const CONCAT_CHAR: char = '~';
 // const KLEENE_CHAR: char = '*';
 // const POSITIVE_CHAR: char = '+';
 // const UNION_CHAR: char = '|';
@@ -43,7 +42,7 @@ fn is_op(c: &char) -> bool {
 }
 
 /// Is the char valid in our regular expressions?
-fn is_valid_regex_symbol(c: &char) -> bool {
+pub fn is_valid_regex_symbol(c: &char) -> bool {
     !(is_op(c)) /* && ((*c as u8) >= 32 && (*c as u8) < 132) */
     // c.is_ascii_alphanumeric() || *c == '#' || *c == EPSILON || *c == '\'' || *c == '\"' || *c == '.'
 }
@@ -60,7 +59,7 @@ fn is_valid_regex_symbol(c: &char) -> bool {
 /// - `a?` is replaced as `(a|@)`
 ///
 /// `@` is used to represent `EPSILON`.
-fn preprocess_regex(regex: &String) -> String {
+pub fn preprocess_regex(regex: &String) -> String {
     let mut new_regex = String::new();
     let mut stack = Vec::new();
     let bytes = regex.as_bytes();
@@ -120,7 +119,7 @@ fn preprocess_regex(regex: &String) -> String {
 
 /// AST node representation
 #[derive(Debug, Clone)]
-struct Node {
+pub struct Node {
     /// The symbol of the regex that this node represents.
     symbol: char,
     /// Left child.
@@ -250,7 +249,7 @@ impl Node {
 
 /// DFA representation
 #[derive(Debug)]
-struct Dfa {
+pub struct Dfa {
     /// The transition table of this `Dfa`.
     dfa: HashMap<u32, HashMap<u8, u32>>,
     /// The set of accepting states of this `Dfa`.
@@ -281,7 +280,7 @@ impl Dfa {
 ///
 /// The followpos table is also updated to be used later
 /// in the REGEX -> DFA algorithm.
-fn parse_regex(
+pub fn parse_regex(
     regex: &String,
     fp_table: &mut HashMap<u32, HashSet<u32>>,
     pos_table: &mut HashMap<char, HashSet<u32>>,
@@ -490,7 +489,7 @@ fn parse_regex(
 ///
 /// `fp_table` and `s_table` should be built using the `parse_regex` method. `root` is also
 /// obtained by calling `parse_regex`.
-fn regex_dfa(
+pub fn regex_dfa(
     fp_table: &HashMap<u32, HashSet<u32>>,
     s_table: &HashMap<char, HashSet<u32>>,
     tokens: &Vec<CocolToken>,
@@ -1003,7 +1002,7 @@ pub fn parse_cocol_file(
 ///
 /// Output
 ///  - Writes the lexical analyzer source file to the project root directory.
-fn generate_scanner(
+pub fn generate_scanner(
     filename: &str,
     dfa: &Dfa,
     accepting_states: &HashMap<u32, CocolToken>,
