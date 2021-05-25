@@ -24,15 +24,11 @@ library    = "<" files { files } ">" .
 PRAGMAS
   PreProcessor = "#" {macros} .
 
-COMMENTS FROM "/*" TO "*/"
-
 IGNORE tab + eol + CHR(13)
 
 PRODUCTIONS
 
-  C                    = { Definition } EOF .
-
-/* Variable and Type Definitions */
+  C                    = { Definition }.
 
   Definition           = [ StorageClass ] Type { "*" } identifier
                             ( FunctionDefinition | VarList ";" ) .
@@ -48,15 +44,11 @@ PRODUCTIONS
 
   ArraySize            = { "[" [ ConstExpression ] "]" } .
 
-/* Function Definitions */
-
   FunctionDefinition   = FunctionHeader ( ";" | FunctionBody ) .
   FunctionHeader       = "(" [ FormalParamList ] ")" .
   FunctionBody         = CompoundStatement .
   FormalParamList      = FormalParameter { "," FormalParameter } .
   FormalParameter      = Type { "*" } [ identifier ] ArraySize .
-
-/* Statements */
 
   Statement            = { Label }
                          (  AssignmentExpression | BreakStatement
@@ -67,9 +59,6 @@ PRODUCTIONS
                            | WhileStatement ) .
 
   Label                = "case" ConstExpression ":"  |  "default" ":" .
-
-/* There is no requirement that a switch statement be followed by a compound
-   statement.  Actually labels may be even more general */
 
   AssignmentExpression = Expression ";" .
 
@@ -94,14 +83,9 @@ PRODUCTIONS
 
   WhileStatement       = "while" "(" Expression ")" Statement .
 
-/* LocalDeclarations */
-
   LocalDeclaration     = [ StorageClass ] Type { "*" } identifier
                           ( FunctionHeader | VarList ) ";"  .
 
-/* Expressions, based on Kernighan and Ritchie: "The C Programming Language".
-   There does not seem to be a way to make this work in an LL(1) fashion,
-   but this generates a "working" parser */
 
   ConstExpression      = Expression .
 
@@ -131,17 +115,9 @@ PRODUCTIONS
 
   CastExp              = UnaryExp .
 
-/* we should really add
-                         | "(" identifier ")" CastExp .
-   but this breaks it badly */
-
   UnaryExp             = PostFixExp
                          | ( "++" | "--" ) UnaryExp
                          | UnaryOperator CastExp .
-
-/* we should really add
-                         | "sizeof" ( UnaryExp | "(" Type ")" ) .
-   but this breaks it badly */
 
   PostFixExp           = Primary
                          { "[" Expression "]"

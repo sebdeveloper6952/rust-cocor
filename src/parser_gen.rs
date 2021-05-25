@@ -3,8 +3,6 @@ use crate::scanner_gen;
 use crate::CocolToken;
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::process;
-use std::str::FromStr;
 
 #[derive(Debug)]
 pub struct Production {
@@ -222,7 +220,6 @@ impl Parser {{
     }}
 
     fn m(&mut self, t: &str) {{
-        // println!(\"M: next {{}} => read: {{}}\", self.next.name, t);
         if self.next.name == t {{
             self.curr = self.next.clone();
             match self.scanner.next_token() {{
@@ -232,15 +229,18 @@ impl Parser {{
                 _ => self.next = Token::empty(),
             }}
         }} else {{
-            println!(\"ERROR: next {{}} t {{}}\", self.next.name, t);
-            panic!(\"input error!\");
+            self.error(&format!(\"{{}} expected.\", t));
         }}
+    }}
+    
+    fn error(&mut self, error: &str) {{
+        println!(\"{{}}\", error);
     }}\n",
         initial_symbol
     ));
 
     // for each production
-    for (i, e) in prods.iter().enumerate() {
+    for (_, e) in prods.iter().enumerate() {
         let mut head: Vec<cocor_scanner::Token> = Vec::new();
         let mut body: Vec<cocor_scanner::Token> = Vec::new();
         let mut eq_found = false;
@@ -268,7 +268,7 @@ impl Parser {{
         }
 
         let root = create_prod_tree(&body, &tok_table, &first);
-        let prod_code = codegen_preorder_traversal(&root);
+        let prod_code = codegen_preorder_traversal(&root, &e.head.lexeme);
         code.push_str(&format!("{}}}", prod_code));
     }
     // close impl block
@@ -290,6 +290,7 @@ enum PKind {
     Concat,
     BlockEnd,
     OrEnd,
+    OptionEnd,
     Eq,
     PEnd,
 }
@@ -371,6 +372,18 @@ impl PNode {
         }
     }
 
+    fn new_option_end() -> PNode {
+        let t = cocor_scanner::Token::new(format!("OPTIONAL"), format!("OPTIONAL"));
+        PNode {
+            k: PKind::OptionEnd,
+            t,
+            c: vec![],
+            o: false,
+            first: vec![],
+            visited: false,
+        }
+    }
+
     fn set_o(&mut self, o: bool) {
         self.o = o;
     }
@@ -432,7 +445,7 @@ fn create_prod_tree(
                         let fs = c0.first.clone();
                         let c1 = PNode::new(
                             PKind::Or,
-                            vec![PNode::new_or_block(), PNode::new_end_block(), c0],
+                            vec![PNode::new_option_end(), PNode::new_end_block(), c0],
                             fs,
                         );
                         nodes.push(c1);
@@ -486,7 +499,7 @@ fn create_prod_tree(
                     let fs = c0.first.clone();
                     let c1 = PNode::new(
                         PKind::Or,
-                        vec![PNode::new_or_block(), PNode::new_end_block(), c0],
+                        vec![PNode::new_option_end(), PNode::new_end_block(), c0],
                         fs,
                     );
                     nodes.push(c1);
@@ -535,7 +548,7 @@ fn create_prod_tree(
                     let fs = c0.first.clone();
                     let c1 = PNode::new(
                         PKind::Or,
-                        vec![PNode::new_or_block(), PNode::new_end_block(), c0],
+                        vec![PNode::new_option_end(), PNode::new_end_block(), c0],
                         fs,
                     );
                     nodes.push(c1);
@@ -584,7 +597,7 @@ fn create_prod_tree(
                     let fs = c0.first.clone();
                     let c1 = PNode::new(
                         PKind::Or,
-                        vec![PNode::new_or_block(), PNode::new_end_block(), c0],
+                        vec![PNode::new_option_end(), PNode::new_end_block(), c0],
                         fs,
                     );
                     nodes.push(c1);
@@ -634,7 +647,7 @@ fn create_prod_tree(
                     let fs = c0.first.clone();
                     let c1 = PNode::new(
                         PKind::Or,
-                        vec![PNode::new_or_block(), PNode::new_end_block(), c0],
+                        vec![PNode::new_option_end(), PNode::new_end_block(), c0],
                         fs,
                     );
                     nodes.push(c1);
@@ -683,7 +696,7 @@ fn create_prod_tree(
                     let fs = c0.first.clone();
                     let c1 = PNode::new(
                         PKind::Or,
-                        vec![PNode::new_or_block(), PNode::new_end_block(), c0],
+                        vec![PNode::new_option_end(), PNode::new_end_block(), c0],
                         fs,
                     );
                     nodes.push(c1);
@@ -732,7 +745,7 @@ fn create_prod_tree(
                     let fs = c0.first.clone();
                     let c1 = PNode::new(
                         PKind::Or,
-                        vec![PNode::new_or_block(), PNode::new_end_block(), c0],
+                        vec![PNode::new_option_end(), PNode::new_end_block(), c0],
                         fs,
                     );
                     nodes.push(c1);
@@ -858,7 +871,7 @@ fn create_prod_tree(
             let fs = c0.first.clone();
             let c1 = PNode::new(
                 PKind::Or,
-                vec![PNode::new_or_block(), PNode::new_end_block(), c0],
+                vec![PNode::new_option_end(), PNode::new_end_block(), c0],
                 fs,
             );
             nodes.push(c1);
@@ -936,12 +949,13 @@ fn gen_nt_code(node: &PNode) -> String {
 }
 
 /// TODO
-fn gen_prod_code(node: &PNode) -> String {
+fn gen_prod_code(node: &PNode, prod_name: &String) -> String {
     match node.k {
         PKind::While => gen_while_code(node),
         PKind::BlockEnd => format!("}}"),
         PKind::Or => String::from("match self.next.name.as_str() {"),
-        PKind::OrEnd => String::from("_=>(),}"),
+        PKind::OrEnd => format!("_=> self.error(\"Invalid {}.\"),}}", prod_name),
+        PKind::OptionEnd => String::from("_=> (),}"),
         PKind::Nt | PKind::Nt2 => gen_nt_code(node),
         PKind::T => gen_t_code(node),
         PKind::Action => node.t.lexeme.clone(),
@@ -949,18 +963,17 @@ fn gen_prod_code(node: &PNode) -> String {
         PKind::PEnd => format!(")"),
         PKind::Eq => format!("{{"),
         PKind::Concat => gen_concat_code(node),
-        _ => String::new(),
     }
 }
 
 /// Code generation inorder traversal of tree.
-fn codegen_preorder_traversal(root: &PNode) -> String {
+fn codegen_preorder_traversal(root: &PNode, prod_name: &String) -> String {
     let mut code = String::new();
     let mut t = vec![root];
     while t.len() > 0 {
         let f = t.pop().unwrap();
         println!("node: {:?} -> first: {:?}", f.k, f.first);
-        let segment = gen_prod_code(f);
+        let segment = gen_prod_code(f, prod_name);
         code.push_str(&segment);
         for i in f.c.iter() {
             t.push(i);
