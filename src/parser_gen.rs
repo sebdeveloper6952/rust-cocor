@@ -389,6 +389,102 @@ impl PNode {
     }
 }
 
+/// Create a new concatenation node and push it into the node stack.
+///
+/// Description: A concatenation node has two children, so the two top
+/// nodes are popped from the node stack and are made direct children
+/// of the new concatenation node. The first set for the new
+/// concatenation node is also calculated according to:
+///     if left.first contains empty {
+///         first = left.first U right.first
+///     } else {
+///         first = left.first
+///     }
+///
+/// Input: the node stack.
+/// Output: the node stack is modified to include the new concatenation
+/// node.
+fn push_new_concat_node(nodes: &mut Vec<PNode>) {
+    let c1 = nodes.pop().unwrap();
+    let c0 = nodes.pop().unwrap();
+    let mut fs = c0.first.clone();
+    if fs.len() == 0 {
+        fs.extend(c1.first.clone());
+    }
+    let c2 = PNode::new(PKind::Concat, vec![c1, c0], fs);
+    nodes.push(c2);
+}
+
+/// Create a new kleene closure node and push it into the node stack.
+///
+/// Description: A kleene node has one child, so the top node is popped
+/// from the node stack and made direct child of the new kleene node. The
+/// first set for the new kleene node is also calculated according to:
+///     first = child.first
+///
+/// Input: the node stack.
+/// Output: the node stack is modified to include the new kleene
+/// node.
+fn push_new_kleene_node(nodes: &mut Vec<PNode>) {
+    let c0 = nodes.pop().unwrap();
+    let fs = c0.first.clone();
+    let c1 = PNode::new(PKind::While, vec![PNode::new_end_block(), c0], fs);
+    nodes.push(c1);
+}
+
+/// /// Create a new OR node and push it into the node stack.
+///
+/// Description: A OR node has two children, so the top two nodes are popped
+/// from the node stack and made direct children of the new OR node. The
+/// first set for the new OR node is also calculated according to:
+///     first = left.first U right.first
+///
+/// Input: the node stack.
+/// Output: the node stack is modified to include the new OR
+/// node.
+fn push_new_or_node(nodes: &mut Vec<PNode>) {
+    let mut c1 = nodes.pop().unwrap();
+    let mut c0 = nodes.pop().unwrap();
+    c0.set_o(true);
+    c1.set_o(true);
+    let mut fs = c0.first.clone();
+    fs.extend(c1.first.clone());
+    let c2 = PNode::new(
+        PKind::Or,
+        vec![
+            PNode::new_or_block(),
+            PNode::new_end_block(),
+            c1,
+            PNode::new_end_block(),
+            c0,
+        ],
+        fs,
+    );
+    nodes.push(c2);
+}
+
+/// Create a new OPTION node and push it into the node stack.
+///
+/// Description: A OPTION node has one child, so the top node is popped
+/// from the node stack and made direct child of the new OPTION node. The
+/// first set for the new OPTION node is also calculated according to:
+///     first = child.first
+///
+/// Input: the node stack.
+/// Output: the node stack is modified to include the new OPTION
+/// node.
+fn push_new_option_node(nodes: &mut Vec<PNode>) {
+    let mut c0 = nodes.pop().unwrap();
+    c0.set_o(true);
+    let fs = c0.first.clone();
+    let c1 = PNode::new(
+        PKind::Or,
+        vec![PNode::new_option_end(), PNode::new_end_block(), c0],
+        fs,
+    );
+    nodes.push(c1);
+}
+
 /// Create a parse tree for the production body.
 fn create_prod_tree(
     // prod: &Production,
@@ -426,29 +522,11 @@ fn create_prod_tree(
                 while op.len() > 0 && prec[op.last().unwrap()] >= prec[&'.'] {
                     let top = op.pop().unwrap();
                     if top == '.' {
-                        let c1 = nodes.pop().unwrap();
-                        let c0 = nodes.pop().unwrap();
-                        let mut fs = c0.first.clone();
-                        if fs.len() == 0 {
-                            fs.extend(c1.first.clone());
-                        }
-                        let c2 = PNode::new(PKind::Concat, vec![c1, c0], fs);
-                        nodes.push(c2);
+                        push_new_concat_node(&mut nodes);
                     } else if top == '*' {
-                        let c0 = nodes.pop().unwrap();
-                        let fs = c0.first.clone();
-                        let c1 = PNode::new(PKind::While, vec![PNode::new_end_block(), c0], fs);
-                        nodes.push(c1);
+                        push_new_kleene_node(&mut nodes);
                     } else if top == '~' {
-                        let mut c0 = nodes.pop().unwrap();
-                        c0.set_o(true);
-                        let fs = c0.first.clone();
-                        let c1 = PNode::new(
-                            PKind::Or,
-                            vec![PNode::new_option_end(), PNode::new_end_block(), c0],
-                            fs,
-                        );
-                        nodes.push(c1);
+                        push_new_option_node(&mut nodes);
                     }
                 }
                 op.push('.');
@@ -461,48 +539,13 @@ fn create_prod_tree(
             while op.len() > 0 && *op.last().unwrap() != '(' {
                 let top = op.pop().unwrap();
                 if top == '.' {
-                    let c1 = nodes.pop().unwrap();
-                    let c0 = nodes.pop().unwrap();
-                    let mut fs = c0.first.clone();
-                    if fs.len() == 0 {
-                        fs.extend(c1.first.clone());
-                    }
-                    let c2 = PNode::new(PKind::Concat, vec![c1, c0], fs);
-                    nodes.push(c2);
+                    push_new_concat_node(&mut nodes);
                 } else if top == '*' {
-                    let c0 = nodes.pop().unwrap();
-                    let fs = c0.first.clone();
-                    let c1 = PNode::new(PKind::While, vec![PNode::new_end_block(), c0], fs);
-                    nodes.push(c1);
+                    push_new_kleene_node(&mut nodes);
                 } else if top == '|' {
-                    let mut c1 = nodes.pop().unwrap();
-                    let mut c0 = nodes.pop().unwrap();
-                    c0.set_o(true);
-                    c1.set_o(true);
-                    let mut fs = c0.first.clone();
-                    fs.extend(c1.first.clone());
-                    let c2 = PNode::new(
-                        PKind::Or,
-                        vec![
-                            PNode::new_or_block(),
-                            PNode::new_end_block(),
-                            c1,
-                            PNode::new_end_block(),
-                            c0,
-                        ],
-                        fs,
-                    );
-                    nodes.push(c2);
+                    push_new_or_node(&mut nodes);
                 } else if top == '~' {
-                    let mut c0 = nodes.pop().unwrap();
-                    c0.set_o(true);
-                    let fs = c0.first.clone();
-                    let c1 = PNode::new(
-                        PKind::Or,
-                        vec![PNode::new_option_end(), PNode::new_end_block(), c0],
-                        fs,
-                    );
-                    nodes.push(c1);
+                    push_new_option_node(&mut nodes);
                 }
             }
             // pop the opening '('
@@ -510,48 +553,13 @@ fn create_prod_tree(
             while op.len() > 0 && prec[op.last().unwrap()] >= prec[&'*'] {
                 let top = op.pop().unwrap();
                 if top == '.' {
-                    let c1 = nodes.pop().unwrap();
-                    let c0 = nodes.pop().unwrap();
-                    let mut fs = c0.first.clone();
-                    if fs.len() == 0 {
-                        fs.extend(c1.first.clone());
-                    }
-                    let c2 = PNode::new(PKind::Concat, vec![c1, c0], fs);
-                    nodes.push(c2);
+                    push_new_concat_node(&mut nodes);
                 } else if top == '*' {
-                    let c0 = nodes.pop().unwrap();
-                    let fs = c0.first.clone();
-                    let c1 = PNode::new(PKind::While, vec![PNode::new_end_block(), c0], fs);
-                    nodes.push(c1);
+                    push_new_kleene_node(&mut nodes);
                 } else if top == '|' {
-                    let mut c1 = nodes.pop().unwrap();
-                    let mut c0 = nodes.pop().unwrap();
-                    c0.set_o(true);
-                    c1.set_o(true);
-                    let mut fs = c0.first.clone();
-                    fs.extend(c1.first.clone());
-                    let c2 = PNode::new(
-                        PKind::Or,
-                        vec![
-                            PNode::new_or_block(),
-                            PNode::new_end_block(),
-                            c1,
-                            PNode::new_end_block(),
-                            c0,
-                        ],
-                        fs,
-                    );
-                    nodes.push(c2);
+                    push_new_or_node(&mut nodes);
                 } else if top == '~' {
-                    let mut c0 = nodes.pop().unwrap();
-                    c0.set_o(true);
-                    let fs = c0.first.clone();
-                    let c1 = PNode::new(
-                        PKind::Or,
-                        vec![PNode::new_option_end(), PNode::new_end_block(), c0],
-                        fs,
-                    );
-                    nodes.push(c1);
+                    push_new_option_node(&mut nodes);
                 }
             }
             op.push('*');
@@ -559,48 +567,13 @@ fn create_prod_tree(
             while op.len() > 0 && *op.last().unwrap() != '(' {
                 let top = op.pop().unwrap();
                 if top == '.' {
-                    let c1 = nodes.pop().unwrap();
-                    let c0 = nodes.pop().unwrap();
-                    let mut fs = c0.first.clone();
-                    if fs.len() == 0 {
-                        fs.extend(c1.first.clone());
-                    }
-                    let c2 = PNode::new(PKind::Concat, vec![c1, c0], fs);
-                    nodes.push(c2);
+                    push_new_concat_node(&mut nodes);
                 } else if top == '*' {
-                    let c0 = nodes.pop().unwrap();
-                    let fs = c0.first.clone();
-                    let c1 = PNode::new(PKind::While, vec![PNode::new_end_block(), c0], fs);
-                    nodes.push(c1);
+                    push_new_kleene_node(&mut nodes);
                 } else if top == '|' {
-                    let mut c1 = nodes.pop().unwrap();
-                    let mut c0 = nodes.pop().unwrap();
-                    c0.set_o(true);
-                    c1.set_o(true);
-                    let mut fs = c0.first.clone();
-                    fs.extend(c1.first.clone());
-                    let c2 = PNode::new(
-                        PKind::Or,
-                        vec![
-                            PNode::new_or_block(),
-                            PNode::new_end_block(),
-                            c1,
-                            PNode::new_end_block(),
-                            c0,
-                        ],
-                        fs,
-                    );
-                    nodes.push(c2);
+                    push_new_or_node(&mut nodes);
                 } else if top == '~' {
-                    let mut c0 = nodes.pop().unwrap();
-                    c0.set_o(true);
-                    let fs = c0.first.clone();
-                    let c1 = PNode::new(
-                        PKind::Or,
-                        vec![PNode::new_option_end(), PNode::new_end_block(), c0],
-                        fs,
-                    );
-                    nodes.push(c1);
+                    push_new_option_node(&mut nodes);
                 }
             }
             // pop the opening '('
@@ -609,48 +582,13 @@ fn create_prod_tree(
             while op.len() > 0 && prec[op.last().unwrap()] >= prec[&'|'] {
                 let top = op.pop().unwrap();
                 if top == '.' {
-                    let c1 = nodes.pop().unwrap();
-                    let c0 = nodes.pop().unwrap();
-                    let mut fs = c0.first.clone();
-                    if fs.len() == 0 {
-                        fs.extend(c1.first.clone());
-                    }
-                    let c2 = PNode::new(PKind::Concat, vec![c1, c0], fs);
-                    nodes.push(c2);
+                    push_new_concat_node(&mut nodes);
                 } else if top == '*' {
-                    let c0 = nodes.pop().unwrap();
-                    let fs = c0.first.clone();
-                    let c1 = PNode::new(PKind::While, vec![PNode::new_end_block(), c0], fs);
-                    nodes.push(c1);
+                    push_new_kleene_node(&mut nodes);
                 } else if top == '|' {
-                    let mut c1 = nodes.pop().unwrap();
-                    let mut c0 = nodes.pop().unwrap();
-                    c0.set_o(true);
-                    c1.set_o(true);
-                    let mut fs = c0.first.clone();
-                    fs.extend(c1.first.clone());
-                    let c2 = PNode::new(
-                        PKind::Or,
-                        vec![
-                            PNode::new_or_block(),
-                            PNode::new_end_block(),
-                            c1,
-                            PNode::new_end_block(),
-                            c0,
-                        ],
-                        fs,
-                    );
-                    nodes.push(c2);
+                    push_new_or_node(&mut nodes);
                 } else if top == '~' {
-                    let mut c0 = nodes.pop().unwrap();
-                    c0.set_o(true);
-                    let fs = c0.first.clone();
-                    let c1 = PNode::new(
-                        PKind::Or,
-                        vec![PNode::new_option_end(), PNode::new_end_block(), c0],
-                        fs,
-                    );
-                    nodes.push(c1);
+                    push_new_option_node(&mut nodes);
                 }
             }
             op.push('|');
@@ -658,48 +596,13 @@ fn create_prod_tree(
             while op.len() > 0 && *op.last().unwrap() != '(' {
                 let top = op.pop().unwrap();
                 if top == '.' {
-                    let c1 = nodes.pop().unwrap();
-                    let c0 = nodes.pop().unwrap();
-                    let mut fs = c0.first.clone();
-                    if fs.len() == 0 {
-                        fs.extend(c1.first.clone());
-                    }
-                    let c2 = PNode::new(PKind::Concat, vec![c1, c0], fs);
-                    nodes.push(c2);
+                    push_new_concat_node(&mut nodes);
                 } else if top == '*' {
-                    let c0 = nodes.pop().unwrap();
-                    let fs = c0.first.clone();
-                    let c1 = PNode::new(PKind::While, vec![PNode::new_end_block(), c0], fs);
-                    nodes.push(c1);
+                    push_new_kleene_node(&mut nodes);
                 } else if top == '|' {
-                    let mut c1 = nodes.pop().unwrap();
-                    let mut c0 = nodes.pop().unwrap();
-                    c0.set_o(true);
-                    c1.set_o(true);
-                    let mut fs = c0.first.clone();
-                    fs.extend(c1.first.clone());
-                    let c2 = PNode::new(
-                        PKind::Or,
-                        vec![
-                            PNode::new_or_block(),
-                            PNode::new_end_block(),
-                            c1,
-                            PNode::new_end_block(),
-                            c0,
-                        ],
-                        fs,
-                    );
-                    nodes.push(c2);
+                    push_new_or_node(&mut nodes);
                 } else if top == '~' {
-                    let mut c0 = nodes.pop().unwrap();
-                    c0.set_o(true);
-                    let fs = c0.first.clone();
-                    let c1 = PNode::new(
-                        PKind::Or,
-                        vec![PNode::new_option_end(), PNode::new_end_block(), c0],
-                        fs,
-                    );
-                    nodes.push(c1);
+                    push_new_option_node(&mut nodes);
                 }
             }
             // pop the opening '('
@@ -707,48 +610,13 @@ fn create_prod_tree(
             while op.len() > 0 && prec[op.last().unwrap()] >= prec[&'~'] {
                 let top = op.pop().unwrap();
                 if top == '.' {
-                    let c1 = nodes.pop().unwrap();
-                    let c0 = nodes.pop().unwrap();
-                    let mut fs = c0.first.clone();
-                    if fs.len() == 0 {
-                        fs.extend(c1.first.clone());
-                    }
-                    let c2 = PNode::new(PKind::Concat, vec![c1, c0], fs);
-                    nodes.push(c2);
+                    push_new_concat_node(&mut nodes);
                 } else if top == '*' {
-                    let c0 = nodes.pop().unwrap();
-                    let fs = c0.first.clone();
-                    let c1 = PNode::new(PKind::While, vec![PNode::new_end_block(), c0], fs);
-                    nodes.push(c1);
+                    push_new_kleene_node(&mut nodes);
                 } else if top == '|' {
-                    let mut c1 = nodes.pop().unwrap();
-                    let mut c0 = nodes.pop().unwrap();
-                    c0.set_o(true);
-                    c1.set_o(true);
-                    let mut fs = c0.first.clone();
-                    fs.extend(c1.first.clone());
-                    let c2 = PNode::new(
-                        PKind::Or,
-                        vec![
-                            PNode::new_or_block(),
-                            PNode::new_end_block(),
-                            c1,
-                            PNode::new_end_block(),
-                            c0,
-                        ],
-                        fs,
-                    );
-                    nodes.push(c2);
+                    push_new_or_node(&mut nodes);
                 } else if top == '~' {
-                    let mut c0 = nodes.pop().unwrap();
-                    c0.set_o(true);
-                    let fs = c0.first.clone();
-                    let c1 = PNode::new(
-                        PKind::Or,
-                        vec![PNode::new_option_end(), PNode::new_end_block(), c0],
-                        fs,
-                    );
-                    nodes.push(c1);
+                    push_new_option_node(&mut nodes);
                 }
             }
             op.push('~');
@@ -833,48 +701,13 @@ fn create_prod_tree(
     while op.len() > 0 {
         let top = op.pop().unwrap();
         if top == '.' {
-            let c1 = nodes.pop().unwrap();
-            let c0 = nodes.pop().unwrap();
-            let mut fs = c0.first.clone();
-            if fs.len() == 0 {
-                fs.extend(c1.first.clone());
-            }
-            let c2 = PNode::new(PKind::Concat, vec![c1, c0], fs);
-            nodes.push(c2);
+            push_new_concat_node(&mut nodes);
         } else if top == '*' {
-            let c0 = nodes.pop().unwrap();
-            let fs = c0.first.clone();
-            let c1 = PNode::new(PKind::While, vec![PNode::new_end_block(), c0], fs);
-            nodes.push(c1);
+            push_new_kleene_node(&mut nodes);
         } else if top == '|' {
-            let mut c1 = nodes.pop().unwrap();
-            let mut c0 = nodes.pop().unwrap();
-            c0.set_o(true);
-            c1.set_o(true);
-            let mut fs = c0.first.clone();
-            fs.extend(c1.first.clone());
-            let c2 = PNode::new(
-                PKind::Or,
-                vec![
-                    PNode::new_or_block(),
-                    PNode::new_end_block(),
-                    c1,
-                    PNode::new_end_block(),
-                    c0,
-                ],
-                fs,
-            );
-            nodes.push(c2);
+            push_new_or_node(&mut nodes);
         } else if top == '~' {
-            let mut c0 = nodes.pop().unwrap();
-            c0.set_o(true);
-            let fs = c0.first.clone();
-            let c1 = PNode::new(
-                PKind::Or,
-                vec![PNode::new_option_end(), PNode::new_end_block(), c0],
-                fs,
-            );
-            nodes.push(c1);
+            push_new_option_node(&mut nodes);
         }
     }
     nodes.pop().unwrap()
